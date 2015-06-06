@@ -32,10 +32,6 @@ let () =
 
 let load : string -> ('a -> 'b) Signature.t -> ('a -> 'b) =
   fun code signature ->
-    let a = Signature.arity signature in
-    Printf.printf "load: entry; arity %i\n" a; flush_all ();
-    let c = create code a in
-    print_endline "load: adding finaliser"; flush_all ();
+    let c = create code (Signature.arity signature) in
     Gc.finalise free c;
-    print_endline "load: returning"; flush_all ();
     c

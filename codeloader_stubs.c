@@ -33,9 +33,6 @@ value codeloader_create(value code, value arity)
     CAMLparam2(code, arity);
     CAMLlocal1 (result);
     
-    printf("codeloader_create\n");
-    fflush(stdout);
-
     if (Int_val(arity) < 1)
         caml_invalid_argument("arity < 1");
 
@@ -69,8 +66,6 @@ value codeloader_create(value code, value arity)
 
     if (Int_val(arity) == 1)
     {
-        printf("arity 1: simple\n");
-        fflush(stdout);
         Field(result, 0) = (value) mapping->code;
     }
     else
@@ -88,9 +83,6 @@ value codeloader_create(value code, value arity)
             Field(result, 0) = (value) curry_fn;
         else
             Field(result, 0) = (value) named_value_code("codeloader_fail_curry");
-
-        printf("arity %i: curry fn? 0x%lx\n", Int_val(arity), ((long) curry_fn));
-        fflush(stdout);
     }
 
     CAMLreturn(result);
@@ -99,7 +91,6 @@ value codeloader_create(value code, value arity)
 value codeloader_free(value closure)
 {
     CAMLparam1(closure);
-    printf("codeloader_free\n");
     char *code = (char *) Field(closure, 2);
     if (code != 0)
     {
