@@ -99,11 +99,6 @@ let gnu_as instructions =
   ))
 
 let objdump assembled =
-  (*
-  let (bin_fn, bin_f_channel) = Filename.open_temp_file "test_assembler." ".bin" in
-  Out_channel.output_string bin_f_channel assembled;
-  Out_channel.close bin_f_channel; *)
-
   with_temp_file ~suffix:".bin" ~f:(fun bin_fn bin_channel ->
   with_temp_file ~suffix:".o" ~f:(fun elf_fn _ ->
     Out_channel.output_string bin_channel assembled;
