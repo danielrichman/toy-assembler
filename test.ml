@@ -1,3 +1,5 @@
+open Core.Std
+
 (*    0x0000000000000000 <+0>: 48 ff c0  inc    %rax
  *    0x0000000000000003 <+3>: c3        retq        *)
 
@@ -18,4 +20,4 @@ let partial = closure 100
 
 let () =
   let r = partial 200 in
-  Printf.printf "Result: %i\n" r
+  printf "Result: %i\n" r

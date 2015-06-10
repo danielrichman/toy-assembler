@@ -1,3 +1,5 @@
+open Core.Std
+
 module Signature = struct
   type 'a t =
     | Arrow : ('a t * 'b t) -> ('a -> 'b) t
@@ -33,5 +35,5 @@ let () =
 let load : string -> ('a -> 'b) Signature.t -> ('a -> 'b) =
   fun code signature ->
     let c = create code (Signature.arity signature) in
-    Gc.finalise free c;
+    Caml.Gc.finalise free c;
     c
