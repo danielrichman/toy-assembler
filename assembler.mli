@@ -46,7 +46,7 @@ module Operand : sig
     }
 
   type regmem =
-    { base : Register.t
+    { base : Register.t option
     ; index : index option
     ; offset : int
     }
@@ -55,9 +55,8 @@ module Operand : sig
     | Imm   of int
     | Reg64 of Register.t
     | RegMem64 of regmem
-    | Mem64 of int
 
-  val regmem : ?index:(Register.t * int) -> ?offset:int -> Register.t -> regmem
+  val regmem : ?base:Register.t -> ?index:(Register.t * int) -> ?offset:int -> unit -> regmem
 end
 
 module Instruction : sig

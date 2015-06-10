@@ -75,7 +75,7 @@ module Operand = struct
     }
 
   type regmem =
-    { base : Register.t
+    { base : Register.t option
     ; index : index option
     ; offset : int
     }
@@ -84,9 +84,8 @@ module Operand = struct
     | Imm   of int
     | Reg64 of Register.t
     | RegMem64 of regmem
-    | Mem64 of int
 
-  let regmem ?index ?(offset=0) base =
+  let regmem ?base ?index ?(offset=0) () =
     let index = Option.map index ~f:(fun (a, b) -> { value = a; scale = b }) in
     { base; index; offset }
 end
@@ -175,12 +174,6 @@ module Instruction = struct
     | i when is_int32 i -> `I32 i
     | i                 -> `I63 i
 
-  type sib_params =
-    { abase : Register.t
-    ; ascale : int
-    ; aindex : Register.t option
-    }
-
   (* This concerns the second part of ModRM "r/m" only.
    * The first part "reg" may be a register (direct), or an opcode extn. *)
   type addressing_case =
@@ -191,9 +184,9 @@ module Instruction = struct
     | APtr of Register.t 
 
       (* [base + scale * index]
-       * Base must not be RBP or R13.
+       * Base must not be RBP or R13. Base is _not_ optional.
        * Index must not be RSP. Index is optional. *)
-    | ASIB of sib_params
+    | ASIB of Register.t * Operand.index option
 
       (* [reg + disp]
        * Disp must be at most 32 bits. If possible, disp8 will be used.
@@ -202,8 +195,12 @@ module Instruction = struct
 
       (* [base + scale * index + disp]
        * Disp must be at most 32 bits. If possible, disp8 will be used.
+       * Base is _not_ optional.
        * Index must not be RSP. Index is optional. *)
-    | ASIB_Disp of sib_params * int
+    | ASIB_Disp of Register.t * (Operand.index option) * int
+
+      (* [scale * index + disp] *)
+    | ASIB_no_base_Disp of Operand.index * int
 
       (* [RIP + disp] *)
     | ARIP_Rel of int
@@ -216,24 +213,24 @@ module Instruction = struct
     let module R = Register in
     function
     | A.Imm _ -> failwith "Can't address an immediate."
-    | A.RegMem64 { A.base = R.RIP; index = Some _; offset = _ } ->
+    | A.RegMem64 { A.base = Some R.RIP; index = Some _; offset = _ } ->
       failwith "Can't use base-index addressing w. RIP"
     | A.RegMem64 { index = Some { A.value = R.RSP; _ }; _ } ->
       failwith "RSP can't be the index register"
 
     | A.Reg64 reg -> AReg reg
-    | A.Mem64 mem -> ASIB_for_abs mem
-    | A.RegMem64 { A.base = R.RIP; index = None; offset } ->
+    | A.RegMem64 { A.base = Some R.RIP; index = None; offset } ->
       ARIP_Rel offset
+    | A.RegMem64 { A.base = None; index = None; offset } ->
+      ASIB_for_abs offset
 
-    | A.RegMem64 { A.base; index = None; offset } ->
+    | A.RegMem64 { A.base = Some base; index = None; offset } ->
       begin
         match base with
         | RSP | R12 ->
-          let sp = { abase = base; ascale = 1; aindex = None } in
           if offset = 0
-          then ASIB sp
-          else ASIB_Disp (sp, offset)
+          then ASIB (base, None)
+          else ASIB_Disp (base, None, offset)
         | RBP | R13 ->
           ADisp (base, offset)
         | base ->
@@ -242,17 +239,19 @@ module Instruction = struct
           else ADisp (base, offset)
       end
 
-    | A.RegMem64 { A.base; index = Some { A.value = index; scale }; offset } ->
-      let sp = { abase = base; ascale = scale; aindex = Some index } in
+    | A.RegMem64 { A.base = Some base; index = Some index; offset } ->
       begin
         match base with
         | RBP | R13 ->
-          ASIB_Disp (sp, offset)
-        | _ ->
+          ASIB_Disp (base, Some index, offset)
+        | base ->
           if offset = 0
-          then ASIB sp
-          else ASIB_Disp (sp, offset)
+          then ASIB (base, Some index)
+          else ASIB_Disp (base, Some index, offset)
       end
+
+    | A.RegMem64 { A.base = None; index = Some index; offset } ->
+      ASIB_no_base_Disp (index, offset)
 
   type encoded_operands =
     { rex_flags : Opcode.RexFlags.t
@@ -285,19 +284,33 @@ module Instruction = struct
     let make_modrm ~mod_ ~rm =
       `Op (C.ModRM { C.mod_; reg = modrm_r; rm })
     in
-    let make_sib rex_flags { abase; aindex; ascale } ~forbid_base101 =
-      let (b4, b321) = split_4th (R.operand_number abase) in
-      if forbid_base101 then assert (b321 <> 0b101);
+    let make_sib rex_flags base index ~base101 =
+      let (b4, b321) =
+        match base with
+        | Some reg -> split_4th (R.operand_number reg)
+        | None -> (false, 0b101)
+      in
+      begin
+        match base101 with
+        | `Demand -> assert (b321 = 0b101)
+        | `Allow  -> ()
+        | `Forbid -> assert (b321 <> 0b101)
+      end;
       let (i4, i321) =
-        match aindex with
-        | Some reg ->
+        match index with
+        | Some { A.value = reg; _ } ->
           let (x, y) = split_4th (R.operand_number reg) in
           assert (y <> 0b100);
           (x, y)
         | None -> (false, 0b100)
       in
       let s2 =
-        match ascale with
+        let scale =
+          match index with
+          | None -> 1
+          | Some { A.scale; _ } -> scale
+        in
+        match scale with
         | 1 -> 0b00
         | 2 -> 0b01
         | 4 -> 0b10
@@ -331,13 +344,13 @@ module Instruction = struct
       ; suffix = [ make_modrm ~mod_:0b00 ~rm:b321 ]
       }
 
-    | ASIB { abase = (R.RBP | R.R13); _ } ->
+    | ASIB ((R.RBP | R.R13), _) ->
       failwith "attempted to encode SIB with invalid base"
-    | ASIB { aindex = Some R.RSP; _ } ->
+    | ASIB (_, Some { A.value = R.RSP; _ }) ->
       failwith "attempted to encode SIB with index RSP"
-    | ASIB params ->
+    | ASIB (base, index) ->
       let mrm = make_modrm  ~mod_:0b00 ~rm:0b100 in
-      let (rex_flags, sib) = make_sib rex_flags params ~forbid_base101:true in
+      let (rex_flags, sib) = make_sib rex_flags (Some base) index ~base101:`Forbid in
       { rex_flags; suffix = [ mrm; `Op sib ] }
 
     | ADisp ((R.RSP | R.R12), _) ->
@@ -350,12 +363,12 @@ module Instruction = struct
       ; suffix = [ make_modrm ~mod_ ~rm:b321; data ]
       }
 
-    | ASIB_Disp ({ aindex = Some R.RSP; _ }, _) ->
+    | ASIB_Disp (_, Some { A.value = R.RSP; _ }, _) ->
       failwith "attempted to encode SIB_Disp with index RSP"
-    | ASIB_Disp (params, offset) ->
+    | ASIB_Disp (base, index, offset) ->
       let (mod_, data) = disp_mod_data offset in
       let mrm = make_modrm  ~mod_ ~rm:0b100 in
-      let (rex_flags, sib) = make_sib rex_flags params ~forbid_base101:false in
+      let (rex_flags, sib) = make_sib rex_flags (Some base) index ~base101:`Allow in
       { rex_flags; suffix = [ mrm; `Op sib; data ] }
 
     | ASIB_for_abs addr when not (is_int32 addr) ->
@@ -364,6 +377,13 @@ module Instruction = struct
       let mrm = make_modrm  ~mod_:0b00 ~rm:0b100 in
       let sib = C.SIB { C.base = 0b101; index = 0b100; scale = 0b00 } in
       { rex_flags; suffix = [ mrm; `Op sib; `LE32 addr ] }
+
+    | ASIB_no_base_Disp ({ A.value = R.RSP; _ }, _) ->
+      failwith "attempted to encode SIB_no_base_Disp with index RSP"
+    | ASIB_no_base_Disp (index, offset) ->
+      let mrm = make_modrm ~mod_:0b00 ~rm:0b100 in
+      let (rex_flags, sib) = make_sib rex_flags None (Some index) ~base101:`Demand in
+      { rex_flags; suffix = [ mrm; `Op sib; `LE32 offset ] }
 
     | ARIP_Rel addr when not (is_int32 addr) ->
       failwith "address in rip-relative memory reference is too long"
@@ -406,7 +426,7 @@ module Instruction = struct
     function
     | ADD { source = _; dest = A.Imm _ } ->
       failwith "Immediate can't be the dest of an ADD"
-    | ADD { source = (A.RegMem64 _ | A.Mem64 _); dest = (A.RegMem64 _ | A.Mem64 _) } ->
+    | ADD { source = A.RegMem64 _; dest = A.RegMem64 _ } ->
       failwith "Can't have two memory operands"
     | ADD { source = A.Imm imm; dest } ->
       let (subvariant, data, smaller_than_32) =
