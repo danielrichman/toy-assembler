@@ -31,12 +31,15 @@ module Register : sig
   val allocation_pointer : t
   val stack_pointer : t
   val instruction_pointer : t
+
+  val to_string_gas : t -> string
 end
 
 module Opcode : sig
   type t
   val to_int : t -> int
   val to_char : t -> char
+  val to_string_hum : t -> string
 end
 
 module Operand : sig
@@ -45,7 +48,7 @@ module Operand : sig
     ; scale : int
     }
 
-  type regmem =
+  type mem =
     { base : Register.t option
     ; index : index option
     ; offset : int
@@ -54,9 +57,11 @@ module Operand : sig
   type t =
     | Imm   of int
     | Reg64 of Register.t
-    | Mem64 of regmem
+    | Mem64 of mem
 
-  val regmem : ?base:Register.t -> ?index:(Register.t * int) -> ?offset:int -> unit -> regmem
+  val mem : ?base:Register.t -> ?index:(Register.t * int) -> ?offset:int -> unit -> t
+
+  val to_string_gas : t -> string
 end
 
 module Instruction : sig
@@ -69,5 +74,8 @@ module Instruction : sig
 
   val parts : t -> encoded
 
-  val encode_into : t -> (read_write, _) Iobuf.t -> unit
+  val assemble_into : t -> (read_write, Iobuf.seek) Iobuf.t -> unit
+
+  val to_string_gas : t -> string
+  val to_string_assembled : t -> string
 end

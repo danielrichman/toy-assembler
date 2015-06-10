@@ -66,6 +66,25 @@ module Register = struct
     | R14 -> 8 + 6
     | R15 -> 8 + 7
     | RIP -> failwith "RIP can't be used as an operand"
+
+  let to_string_gas = function
+    | RAX -> "%rax"
+    | RBX -> "%rbx"
+    | RDI -> "%rdi"
+    | RSI -> "%rsi"
+    | RDX -> "%rdx"
+    | RCX -> "%rcx"
+    | R8  -> "%r8"
+    | R9  -> "%r9"
+    | R12 -> "%r12"
+    | R13 -> "%r13"
+    | R10 -> "%r10"
+    | R11 -> "%r11"
+    | RBP -> "%rbp"
+    | R14 -> "%r14"
+    | R15 -> "%r15"
+    | RSP -> "%rsp"
+    | RIP -> "%rip"
 end
 
 module Operand = struct
@@ -74,7 +93,7 @@ module Operand = struct
     ; scale : int
     }
 
-  type regmem =
+  type mem =
     { base : Register.t option
     ; index : index option
     ; offset : int
@@ -83,11 +102,33 @@ module Operand = struct
   type t =
     | Imm   of int
     | Reg64 of Register.t
-    | Mem64 of regmem
+    | Mem64 of mem
 
-  let regmem ?base ?index ?(offset=0) () =
+  let mem ?base ?index ?(offset=0) () =
     let index = Option.map index ~f:(fun (a, b) -> { value = a; scale = b }) in
-    { base; index; offset }
+    Mem64 { base; index; offset }
+
+  let to_string_gas = function
+    | Imm i -> sprintf "$%i" i
+    | Reg64 r -> Register.to_string_gas r
+    | Mem64 { base = None; index = None; offset } -> sprintf "0x%x" offset
+    | Mem64 { base; index; offset } ->
+      let base =
+        match base with
+        | Some r -> Register.to_string_gas r
+        | None -> ""
+      in
+      let index =
+        match index with
+        | Some { value; scale } -> sprintf ",%s,%i" (Register.to_string_gas value) scale
+        | None -> ""
+      in
+      let offset =
+        match offset with 
+        | 0 -> ""
+        | i -> Int.to_string i
+      in
+      sprintf "%s(%s%s)" offset base index
 end
 
 (* XXX I'm not sure this should really be called 'Opcode' *)
@@ -98,6 +139,7 @@ module Opcode = struct
     val set : ?w:bool -> ?r:bool -> ?x:bool -> ?b:bool -> t -> t
     val to_int : t -> int
     val is_empty : t -> bool
+    val to_string : t -> string
   end = struct
     type t = int
 
@@ -122,6 +164,11 @@ module Opcode = struct
 
     let is_empty t = (t = 0)
     let to_int t = t
+    let to_string t =
+      let letter v c =
+        if t land v = 0 then "" else Char.to_string c
+      in
+      letter w 'w' ^ letter r 'r' ^ letter x 'x' ^ letter b 'b'
   end
 
   type modrm = { mod_ : int; reg : int; rm : int }
@@ -131,27 +178,37 @@ module Opcode = struct
     | REX of RexFlags.t
     | ModRM of modrm
     | SIB of sib
-    | ADD of [ `imm32 | `rm64_imm32 | `rm64_imm8 | `rm64_r64 | `r64_rm64 ]
+    | ADD of [ `imm32 | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
 
   let to_int = function
     | REX fls -> 0x40 lor (RexFlags.to_int fls)
     | ModRM { mod_; reg; rm } ->
-      assert (0 <= mod_ && 3 <= mod_);
-      assert (0 <= reg  && 7 <= reg);
-      assert (0 <= rm   && 7 <= rm);
-      (mod_ lsl 5) lor (reg  lsl 3) lor rm
+      assert (0 <= mod_ && mod_ <= 3);
+      assert (0 <= reg  && reg  <= 7);
+      assert (0 <= rm   && rm   <= 7);
+      (mod_ lsl 6) lor (reg  lsl 3) lor rm
     | SIB { base; index; scale } ->
       assert (0 <= base  && base <= 7);
       assert (0 <= index && index <= 7);
       assert (0 <= scale && scale <= 3);
-      (scale lsl 5) lor (index lsl 3) lor base
-    | ADD `imm32      -> 05
-    | ADD `rm64_imm32 -> 81
-    | ADD `rm64_imm8  -> 83
-    | ADD `rm64_r64   -> 01
-    | ADD `r64_rm64   -> 03
+      (scale lsl 6) lor (index lsl 3) lor base
+    | ADD `imm32      -> 0x05
+    | ADD `imm32_rm64 -> 0x81
+    | ADD `imm8_rm64  -> 0x83
+    | ADD `r64_rm64   -> 0x01
+    | ADD `rm64_r64   -> 0x03
 
   let to_char = Fn.compose Char.of_int_exn to_int
+
+  let to_string_hum = function
+    | REX fls -> sprintf "REX.%s" (RexFlags.to_string fls)
+    | ModRM { mod_; reg; rm } -> sprintf "ModRM(m:%i reg:%i r/m:%i)" mod_ reg rm
+    | SIB { base; index; scale } -> sprintf "SIB(s:%i i:%i b:%i)" scale index base
+    | ADD `imm32      -> "ADD imm32 RAX"
+    | ADD `imm32_rm64 -> "ADD imm32 rm64"
+    | ADD `imm8_rm64  -> "ADD imm8 rm64"
+    | ADD `r64_rm64   -> "ADD r64 rm64"
+    | ADD `rm64_r64   -> "ADD rm64 r64"
 end
 
 module Instruction = struct
@@ -184,7 +241,7 @@ module Instruction = struct
     | APtr of Register.t 
 
       (* [base + scale * index]
-       * Base must not be RBP or R13. Base is _not_ optional.
+       * Base must not be RBP or R13.
        * Index must not be RSP. Index is optional. *)
     | ASIB of Register.t * Operand.index option
 
@@ -195,7 +252,6 @@ module Instruction = struct
 
       (* [base + scale * index + disp]
        * Disp must be at most 32 bits. If possible, disp8 will be used.
-       * Base is _not_ optional.
        * Index must not be RSP. Index is optional. *)
     | ASIB_Disp of Register.t * (Operand.index option) * int
 
@@ -259,7 +315,7 @@ module Instruction = struct
     }
   
   let split_4th x =
-    assert (0 <= x && x <= 7);
+    assert (0 <= x && x <= 15);
     (x land 0b1000 <> 0, x land 0b0111)
 
   (* returns the rex flags required and the suffix *)
@@ -429,30 +485,41 @@ module Instruction = struct
     | ADD { source = A.Mem64 _; dest = A.Mem64 _ } ->
       failwith "Can't have two memory operands"
     | ADD { source = A.Imm imm; dest } ->
-      let (subvariant, data, smaller_than_32) =
+      let (subvariant, data) =
         match immediate_size imm with
-        | `Zero   -> (`rm64_imm8, [ `I8 0 ], true)
-        | `I8 i   -> (`rm64_imm8, [ `I8 i ], true)
-        | `I32 i  -> (`rm64_imm32, [ `LE32 i ], true)
+        | `Zero   -> (`imm8_rm64,  [ `I8 0 ])
+        | `I8 i   -> (`imm8_rm64,  [ `I8 i ])
+        | `I32 i  -> (`imm32_rm64, [ `LE32 i ])
         | `I63 _  -> failwith "Immediate too large for ADD"
       in
       begin
-        match (dest, smaller_than_32) with
-        | (A.Reg64 R.RAX, true) ->
-          make_instruction (C.ADD `imm32) ~data:[ `LE32 imm ] ()
+        (* Optimisation: 05 id is a shorter version of 83 /0,RAX id *)
+        match (dest, subvariant) with
+        | (A.Reg64 R.RAX, `imm32_rm64) ->
+          make_instruction (C.ADD `imm32) ~data ()
         | (dest, _) ->
           make_instruction (C.ADD subvariant) ~modrm_sib_disp:(`Op_extn 0, dest) ~data ()
       end
-    | ADD { source = src; dest = A.Reg64 dest } ->
-      make_instruction (C.ADD `r64_rm64) ~modrm_sib_disp:(`Reg dest, src) ()
     | ADD { source = A.Reg64 src; dest } ->
-      make_instruction (C.ADD `rm64_r64) ~modrm_sib_disp:(`Reg src, dest) ()
+      make_instruction (C.ADD `r64_rm64) ~modrm_sib_disp:(`Reg src, dest) ()
+    | ADD { source = src; dest = A.Reg64 dest } ->
+      make_instruction (C.ADD `rm64_r64) ~modrm_sib_disp:(`Reg dest, src) ()
 
-  let encode_into t buf =
+  let assemble_into t buf =
     List.iter (parts t) ~f:(
       function
-      | `Op op  -> Iobuf.Poke.char     buf (Opcode.to_char op) ~pos:0
-      | `LE32 v -> Iobuf.Poke.int32_le buf v ~pos:0
-      | `I8 v   -> Iobuf.Poke.int8     buf v ~pos:0
+      | `Op op  -> Iobuf.Fill.char     buf (Opcode.to_char op)
+      | `LE32 v -> Iobuf.Fill.int32_le buf v
+      | `I8 v   -> Iobuf.Fill.int8     buf v
     )
+
+  let to_string_assembled t =
+    let buf = Iobuf.create ~len:32 in
+    assemble_into t buf;
+    Iobuf.flip_lo buf;
+    Iobuf.to_string buf
+
+  let to_string_gas = function
+    | ADD { source; dest } ->
+      sprintf "addq %s,%s" (Operand.to_string_gas source) (Operand.to_string_gas dest)
 end
