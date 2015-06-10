@@ -57,16 +57,21 @@ let operands =
   ]
 
 let instructions =
-  List.concat_map operands ~f:(fun source ->
-    List.filter_map operands ~f:(fun dest ->
-      match (source, dest) with
-      | (_, Imm _) -> None
-      | (Mem64 _, Mem64 _) -> None
-      | (source, dest) ->
-        let open Assembler.Instruction in
-        Some (ADD { source; dest })
+  [ (* ADD *)
+    List.concat_map operands ~f:(fun source ->
+      List.filter_map operands ~f:(fun dest ->
+        match (source, dest) with
+        | (_, Imm _) -> None
+        | (Mem64 _, Mem64 _) -> None
+        | (source, dest) ->
+          let open Assembler.Instruction in
+          Some (ADD { source; dest })
+      )
     )
-  )
+  ; (* RET *)
+    [ Assembler.Instruction.RET ]
+  ]
+  |> List.concat
 
 let with_temp_file ~suffix ~f =
   let (fn, chan) = Filename.open_temp_file "test_assembler." suffix in

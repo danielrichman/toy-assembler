@@ -179,6 +179,7 @@ module Opcode = struct
     | ModRM of modrm
     | SIB of sib
     | ADD of [ `imm32 | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
+    | RET
 
   let to_int = function
     | REX fls -> 0x40 lor (RexFlags.to_int fls)
@@ -197,6 +198,7 @@ module Opcode = struct
     | ADD `imm8_rm64  -> 0x83
     | ADD `r64_rm64   -> 0x01
     | ADD `rm64_r64   -> 0x03
+    | RET -> 0xc3
 
   let to_char = Fn.compose Char.of_int_exn to_int
 
@@ -209,6 +211,7 @@ module Opcode = struct
     | ADD `imm8_rm64  -> "ADD imm8 rm64"
     | ADD `r64_rm64   -> "ADD r64 rm64"
     | ADD `rm64_r64   -> "ADD rm64 r64"
+    | RET -> "RET"
 end
 
 module Instruction = struct
@@ -216,6 +219,7 @@ module Instruction = struct
 
   type t =
     | ADD of add
+    | RET
 
   type encoded = [ `Op of Opcode.t | `LE32 of int | `I8 of int ] list
 
@@ -504,6 +508,9 @@ module Instruction = struct
       make_instruction (C.ADD `r64_rm64) ~modrm_sib_disp:(`Reg src, dest) ()
     | ADD { source = src; dest = A.Reg64 dest } ->
       make_instruction (C.ADD `rm64_r64) ~modrm_sib_disp:(`Reg dest, src) ()
+    | RET ->
+      (* RET does not need REX.W; it defaults to 64 bits *)
+      [ `Op C.RET ]
 
   let assemble_into t buf =
     List.iter (parts t) ~f:(
@@ -552,6 +559,7 @@ module Instruction = struct
   let to_string_gas = function
     | ADD { source; dest } ->
       sprintf "addq %s,%s" (Operand.to_string_gas source) (Operand.to_string_gas dest)
+    | RET -> "ret"
 end
 
 module Std = struct
