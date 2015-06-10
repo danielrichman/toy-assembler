@@ -69,6 +69,7 @@ module Instruction : sig
 
   type t =
     | ADD of add
+    | DEC of Operand.t
     | RET
 
   type encoded = [ `Op of Opcode.t | `LE32 of int | `I8 of int ] list
