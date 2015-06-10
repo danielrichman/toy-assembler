@@ -54,7 +54,7 @@ module Operand : sig
   type t =
     | Imm   of int
     | Reg64 of Register.t
-    | RegMem64 of regmem
+    | Mem64 of regmem
 
   val regmem : ?base:Register.t -> ?index:(Register.t * int) -> ?offset:int -> unit -> regmem
 end

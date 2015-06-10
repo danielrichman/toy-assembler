@@ -83,7 +83,7 @@ module Operand = struct
   type t =
     | Imm   of int
     | Reg64 of Register.t
-    | RegMem64 of regmem
+    | Mem64 of regmem
 
   let regmem ?base ?index ?(offset=0) () =
     let index = Option.map index ~f:(fun (a, b) -> { value = a; scale = b }) in
@@ -213,18 +213,18 @@ module Instruction = struct
     let module R = Register in
     function
     | A.Imm _ -> failwith "Can't address an immediate."
-    | A.RegMem64 { A.base = Some R.RIP; index = Some _; offset = _ } ->
+    | A.Mem64 { A.base = Some R.RIP; index = Some _; offset = _ } ->
       failwith "Can't use base-index addressing w. RIP"
-    | A.RegMem64 { index = Some { A.value = R.RSP; _ }; _ } ->
+    | A.Mem64 { index = Some { A.value = R.RSP; _ }; _ } ->
       failwith "RSP can't be the index register"
 
     | A.Reg64 reg -> AReg reg
-    | A.RegMem64 { A.base = Some R.RIP; index = None; offset } ->
+    | A.Mem64 { A.base = Some R.RIP; index = None; offset } ->
       ARIP_Rel offset
-    | A.RegMem64 { A.base = None; index = None; offset } ->
+    | A.Mem64 { A.base = None; index = None; offset } ->
       ASIB_for_abs offset
 
-    | A.RegMem64 { A.base = Some base; index = None; offset } ->
+    | A.Mem64 { A.base = Some base; index = None; offset } ->
       begin
         match base with
         | RSP | R12 ->
@@ -239,7 +239,7 @@ module Instruction = struct
           else ADisp (base, offset)
       end
 
-    | A.RegMem64 { A.base = Some base; index = Some index; offset } ->
+    | A.Mem64 { A.base = Some base; index = Some index; offset } ->
       begin
         match base with
         | RBP | R13 ->
@@ -250,7 +250,7 @@ module Instruction = struct
           else ASIB_Disp (base, Some index, offset)
       end
 
-    | A.RegMem64 { A.base = None; index = Some index; offset } ->
+    | A.Mem64 { A.base = None; index = Some index; offset } ->
       ASIB_no_base_Disp (index, offset)
 
   type encoded_operands =
@@ -426,7 +426,7 @@ module Instruction = struct
     function
     | ADD { source = _; dest = A.Imm _ } ->
       failwith "Immediate can't be the dest of an ADD"
-    | ADD { source = A.RegMem64 _; dest = A.RegMem64 _ } ->
+    | ADD { source = A.Mem64 _; dest = A.Mem64 _ } ->
       failwith "Can't have two memory operands"
     | ADD { source = A.Imm imm; dest } ->
       let (subvariant, data, smaller_than_32) =
