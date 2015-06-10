@@ -78,4 +78,12 @@ module Instruction : sig
 
   val to_string_gas : t -> string
   val to_string_assembled : t -> string
+  val t_list_to_string_assembled : t list -> string
+end
+
+module Std : sig
+  module R = Register
+  module A = Operand
+  module I = Instruction
+  val assemble : I.t list -> string
 end

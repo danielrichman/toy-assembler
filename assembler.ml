@@ -519,7 +519,44 @@ module Instruction = struct
     Iobuf.flip_lo buf;
     Iobuf.to_string buf
 
+  let t_list_to_string_assembled ts =
+    let chunk_size = Int.min (List.length ts * 32) 10024 in
+    let chunks_rev = ref [] in
+    let new_chunk () =
+      let c = Iobuf.create ~len:chunk_size in
+      chunks_rev := c :: !chunks_rev;
+      c
+    in
+    List.iter ts ~f:(fun t ->
+      let chunk =
+        match !chunks_rev with
+        | [] -> new_chunk ()
+        | x::_ when Iobuf.length x < 32 -> new_chunk ()
+        | x::_ -> x
+      in
+      assemble_into t chunk
+    );
+
+    List.iter !chunks_rev ~f:Iobuf.flip_lo;
+    let len =
+      List.fold !chunks_rev ~init:0 ~f:(fun acc chunk -> acc + Iobuf.length chunk)
+    in
+
+    let final = Iobuf.create ~len in
+    List.iter
+      (List.rev !chunks_rev)
+      ~f:(fun c -> Iobuf.transfer ?len:None ~src:c ~dst:final);
+    Iobuf.flip_lo final;
+    Iobuf.to_string final
+
   let to_string_gas = function
     | ADD { source; dest } ->
       sprintf "addq %s,%s" (Operand.to_string_gas source) (Operand.to_string_gas dest)
+end
+
+module Std = struct
+  module R = Register
+  module A = Operand
+  module I = Instruction
+  let assemble = I.t_list_to_string_assembled
 end

@@ -143,12 +143,7 @@ let debug inst =
 
 let compare_with_gas instructions =
   let gas_binary = gnu_as instructions in
-  let assembled =
-    let temp = Iobuf.create ~len:(List.length instructions * 16) in
-    List.iter instructions ~f:(fun i -> Assembler.Instruction.assemble_into i temp);
-    Iobuf.flip_lo temp;
-    Iobuf.to_string temp
-  in
+  let assembled = Assembler.Instruction.t_list_to_string_assembled instructions in
   gas_binary = assembled
 
 let rec bisect =
