@@ -5,9 +5,11 @@ module Signature = struct
     | Arrow : ('a t * 'b t) -> ('a -> 'b) t
     | Int : int t
     | Ref : 'a t -> 'a ref t
+    | Iobuf : (read_write, _) Iobuf.t t
 
   let int = Int
   let ref x = Ref x
+  let iobuf = Iobuf
   let (@->) a b = Arrow (a, b)
 
   let arity f =
@@ -16,6 +18,7 @@ module Signature = struct
         match g with
         | Int -> tot
         | Ref _ -> tot
+        | Iobuf -> tot
         | Arrow (_, b) -> loop (tot + 1) b
     in
     loop 0 f
