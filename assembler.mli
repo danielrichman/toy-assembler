@@ -69,6 +69,7 @@ module Instruction : sig
 
   type t =
     | ADD of add
+    | INC of Operand.t
     | DEC of Operand.t
     | RET
 

@@ -68,6 +68,12 @@ let instructions =
           Some (ADD { source; dest })
       )
     )
+  ; (* INC *)
+    List.filter_map operands ~f:(fun tgt ->
+      match tgt with
+      | Imm _ -> None
+      | tgt -> Some (Assembler.Instruction.INC tgt)
+    )
   ; (* DEC *)
     List.filter_map operands ~f:(fun tgt ->
       match tgt with

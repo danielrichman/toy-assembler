@@ -179,6 +179,7 @@ module Opcode = struct
     | ModRM of modrm
     | SIB of sib
     | ADD of [ `imm32 | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
+    | INC
     | DEC
     | RET
 
@@ -199,6 +200,7 @@ module Opcode = struct
     | ADD `imm8_rm64  -> 0x83
     | ADD `r64_rm64   -> 0x01
     | ADD `rm64_r64   -> 0x03
+    | INC -> 0xff
     | DEC -> 0xff
     | RET -> 0xc3
 
@@ -213,6 +215,7 @@ module Opcode = struct
     | ADD `imm8_rm64  -> "ADD imm8 rm64"
     | ADD `r64_rm64   -> "ADD r64 rm64"
     | ADD `rm64_r64   -> "ADD rm64 r64"
+    | INC -> "INC"
     | DEC -> "DEC"
     | RET -> "RET"
 end
@@ -222,6 +225,7 @@ module Instruction = struct
 
   type t =
     | ADD of add
+    | INC of Operand.t
     | DEC of Operand.t
     | RET
 
@@ -512,10 +516,17 @@ module Instruction = struct
       make_instruction (C.ADD `r64_rm64) ~modrm_sib_disp:(`Reg src, dest) ()
     | ADD { source = src; dest = A.Reg64 dest } ->
       make_instruction (C.ADD `rm64_r64) ~modrm_sib_disp:(`Reg dest, src) ()
+
+    | INC (A.Imm _) ->
+      failwith "Can't increment an immediate"
+    | INC tgt ->
+      make_instruction C.INC ~modrm_sib_disp:(`Op_extn 0, tgt) ()
+
     | DEC (A.Imm _) ->
       failwith "Can't decrement an immediate"
     | DEC tgt ->
       make_instruction C.DEC ~modrm_sib_disp:(`Op_extn 1, tgt) ()
+
     | RET ->
       (* RET does not need REX.W; it defaults to 64 bits *)
       [ `Op C.RET ]
@@ -567,8 +578,8 @@ module Instruction = struct
   let to_string_gas = function
     | ADD { source; dest } ->
       sprintf "addq %s,%s" (Operand.to_string_gas source) (Operand.to_string_gas dest)
-    | DEC tgt ->
-      sprintf "decq %s" (Operand.to_string_gas tgt)
+    | INC tgt -> sprintf "incq %s" (Operand.to_string_gas tgt)
+    | DEC tgt -> sprintf "decq %s" (Operand.to_string_gas tgt)
     | RET -> "ret"
 end
 

@@ -4,8 +4,10 @@ module Signature = struct
   type 'a t =
     | Arrow : ('a t * 'b t) -> ('a -> 'b) t
     | Int : int t
+    | Ref : 'a t -> 'a ref t
 
   let int = Int
+  let ref x = Ref x
   let (@->) a b = Arrow (a, b)
 
   let arity f =
@@ -13,6 +15,7 @@ module Signature = struct
       fun tot g ->
         match g with
         | Int -> tot
+        | Ref _ -> tot
         | Arrow (_, b) -> loop (tot + 1) b
     in
     loop 0 f
