@@ -85,18 +85,20 @@ let instructions =
       )
     end
 
-  ; (* INC *)
-    List.filter_map operands ~f:(fun tgt ->
+  ; (* INC, DEC *)
+    List.concat_map operands ~f:(fun tgt ->
       match tgt with
-      | Imm _ -> None
-      | tgt -> Some (Assembler.Instruction.INC tgt)
+      | Imm _ -> []
+      | tgt -> Assembler.Instruction.( [ INC tgt; DEC tgt ] )
     )
 
-  ; (* DEC *)
-    List.filter_map operands ~f:(fun tgt ->
-      match tgt with
-      | Imm _ -> None
-      | tgt -> Some (Assembler.Instruction.DEC tgt)
+  ; (* SHL, SHR *)
+    List.concat_map [1; 2; 10; 60] ~f:(fun bts ->
+      List.concat_map operands ~f:(fun tgt ->
+        match tgt with
+        | Imm _ -> []
+        | tgt -> Assembler.Instruction.( [ SHL (tgt, bts); SHR (tgt, bts) ] )
+      )
     )
 
   ; (* MOV *)
@@ -211,7 +213,7 @@ let rec bisect =
 
 module Counts = struct
   include Map.Make(struct
-    type t = [ `ADD | `INC | `DEC | `MOV | `RET ] with compare, sexp
+    type t = [ `ADD | `INC | `DEC | `SHL | `SHR | `MOV | `RET ] with compare, sexp
   end)
 
   let key_of_instruction =
@@ -221,6 +223,8 @@ module Counts = struct
     | I.INC _ -> `INC
     | I.DEC _ -> `DEC
     | I.MOV _ -> `MOV
+    | I.SHL _ -> `SHL
+    | I.SHR _ -> `SHR
     | I.RET -> `RET
 
   let key_to_string =
@@ -228,6 +232,8 @@ module Counts = struct
     | `ADD -> "ADD"
     | `INC -> "INC"
     | `DEC -> "DEC"
+    | `SHL -> "SHL"
+    | `SHR -> "SHR"
     | `MOV -> "MOV"
     | `RET -> "RET"
 

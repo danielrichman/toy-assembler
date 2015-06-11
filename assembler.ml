@@ -182,6 +182,8 @@ module Opcode = struct
     | ADD of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
     | INC
     | DEC
+    | SHL of [ `one | `imm8 ]
+    | SHR of [ `one | `imm8 ]
     | MOV of [ `r64_rm64 | `rm64_r64 | `moffset64_RAX | `RAX_moffset64
              | `imm64_r64 of int | `imm32_rm64 ]
     | RET
@@ -205,6 +207,10 @@ module Opcode = struct
     | ADD `rm64_r64   -> 0x03
     | INC -> 0xff
     | DEC -> 0xff
+    | SHL `one  -> 0xD1
+    | SHL `imm8 -> 0xC1
+    | SHR `one  -> 0xD1
+    | SHR `imm8 -> 0xC1
     | MOV `r64_rm64       -> 0x89
     | MOV `rm64_r64       -> 0x8B
     | MOV `moffset64_RAX  -> 0xA1
@@ -234,6 +240,10 @@ module Opcode = struct
     | MOV `imm32_rm64     -> "MOV imm32 rm64"
     | INC -> "INC"
     | DEC -> "DEC"
+    | SHL `one  -> "SHL 1"
+    | SHL `imm8 -> "SHL imm8"
+    | SHR `one  -> "SHR 1"
+    | SHR `imm8 -> "SHR imm8"
     | RET -> "RET"
 end
 
@@ -244,6 +254,8 @@ module Instruction = struct
     | ADD of binary_op
     | INC of Operand.t
     | DEC of Operand.t
+    | SHL of Operand.t * int
+    | SHR of Operand.t * int
     | MOV of binary_op
     | RET
 
@@ -533,6 +545,24 @@ module Instruction = struct
     | DEC tgt ->
       make_instruction C.DEC ~modrm_sib_disp:(`Op_extn 1, tgt) ()
 
+    | SHL (A.Imm _, _) ->
+      failwith "Can't shift-left an immediate"
+    | SHL (_, i) when i <= 0 || i >= 64 ->
+      failwith "Shift left: invalid # bits"
+    | SHL (tgt, 1) ->
+      make_instruction (C.SHL `one)  ~modrm_sib_disp:(`Op_extn 4, tgt) ()
+    | SHL (tgt, bts) ->
+      make_instruction (C.SHL `imm8) ~modrm_sib_disp:(`Op_extn 4, tgt) ~data:[ `I8 bts ] ()
+
+    | SHR (A.Imm _, _) ->
+      failwith "Can't shift-left an immediate"
+    | SHR (_, i) when i <= 0 || i >= 64 ->
+      failwith "Shift left: invalid # bits"
+    | SHR (tgt, 1) ->
+      make_instruction (C.SHR `one)  ~modrm_sib_disp:(`Op_extn 5, tgt) ()
+    | SHR (tgt, bts) ->
+      make_instruction (C.SHR `imm8) ~modrm_sib_disp:(`Op_extn 5, tgt) ~data:[ `I8 bts ] ()
+
     | MOV { source = _; dest = A.Imm _ } ->
       failwith "Immediate can't be the dest of an MOV"
     | MOV { source = A.Mem64 _; dest = A.Mem64 _ } ->
@@ -613,6 +643,8 @@ module Instruction = struct
     | ADD args -> bop "addq" args
     | INC tgt -> sprintf "incq %s" (Operand.to_string_gas tgt)
     | DEC tgt -> sprintf "decq %s" (Operand.to_string_gas tgt)
+    | SHL (tgt, bts) -> sprintf "shlq $%i,%s" bts (Operand.to_string_gas tgt)
+    | SHR (tgt, bts) -> sprintf "shrq $%i,%s" bts (Operand.to_string_gas tgt)
     | MOV args -> bop "movq" args
     | RET -> "ret"
 end

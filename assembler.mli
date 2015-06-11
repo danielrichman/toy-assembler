@@ -71,6 +71,8 @@ module Instruction : sig
     | ADD of binary_op
     | INC of Operand.t
     | DEC of Operand.t
+    | SHL of Operand.t * int
+    | SHR of Operand.t * int
     | MOV of binary_op
     | RET
 
