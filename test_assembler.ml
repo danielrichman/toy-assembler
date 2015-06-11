@@ -1,11 +1,16 @@
 open Core.Std
 open Core_extended.Std
+open Common
 
 let operands =
   let open Assembler.Register in
   let open Assembler.Operand in
   [ Imm 8
   ; Imm 123123123
+  ; Imm 1058901839296
+  ; Imm (-10)
+  ; Imm (-1289458)
+  ; Imm (-1058901839296)
 
   ; Reg64 RAX
   ; Reg64 R9
@@ -56,30 +61,60 @@ let operands =
   ; mem ~offset:100      ()
   ]
 
+let operand_pairs ~f =
+  List.concat_map operands ~f:(fun source ->
+    List.filter_map operands ~f:(fun dest ->
+      let p = (source, dest) in
+      if f p then Some p else None
+    )
+  )
+
 let instructions =
   [ (* ADD *)
-    List.concat_map operands ~f:(fun source ->
-      List.filter_map operands ~f:(fun dest ->
-        match (source, dest) with
-        | (_, Imm _) -> None
-        | (Mem64 _, Mem64 _) -> None
-        | (source, dest) ->
-          let open Assembler.Instruction in
-          Some (ADD { source; dest })
+    begin
+      let args = operand_pairs ~f:(
+        function
+        | (_, Imm _) -> false
+        | (Mem64 _, Mem64 _) -> false
+        | (Imm i, _) -> is_int32 i
+        | _ -> true
       )
-    )
+      in
+      List.map args ~f:(fun (source, dest) ->
+        Assembler.Instruction.ADD { source; dest }
+      )
+    end
+
   ; (* INC *)
     List.filter_map operands ~f:(fun tgt ->
       match tgt with
       | Imm _ -> None
       | tgt -> Some (Assembler.Instruction.INC tgt)
     )
+
   ; (* DEC *)
     List.filter_map operands ~f:(fun tgt ->
       match tgt with
       | Imm _ -> None
       | tgt -> Some (Assembler.Instruction.DEC tgt)
     )
+
+  ; (* MOV *)
+    begin
+      let args = operand_pairs ~f:(
+        function
+        | (_, Imm _) -> false
+        | (Mem64 _, Mem64 _) -> false
+        | (Imm _, Reg64 _) -> true
+        | (Imm i, _) -> is_int32 i
+        | _ -> true
+      )
+      in
+      List.map args ~f:(fun (source, dest) ->
+        Assembler.Instruction.MOV { source; dest }
+      )
+    end
+
   ; (* RET *)
     [ Assembler.Instruction.RET ]
   ]
@@ -149,6 +184,7 @@ let debug inst =
   List.iter parts ~f:(function
     | `Op op  -> printf "    %s\n" (Assembler.Opcode.to_string_hum op)
     | `LE32 i -> printf "    LE32 %i\n" i
+    | `LE64 i -> printf "    LE64 %i\n" i
     | `I8 i   -> printf "    I8 %i\n" i
   );
   printf "Disassembly\n%s"  disassembled
@@ -173,9 +209,44 @@ let rec bisect =
       Result.bind (bisect l) (fun () -> bisect r)
     end
 
+module Counts = struct
+  include Map.Make(struct
+    type t = [ `ADD | `INC | `DEC | `MOV | `RET ] with compare, sexp
+  end)
+
+  let key_of_instruction =
+    let open Assembler.Std in
+    function
+    | I.ADD _ -> `ADD
+    | I.INC _ -> `INC
+    | I.DEC _ -> `DEC
+    | I.MOV _ -> `MOV
+    | I.RET -> `RET
+
+  let key_to_string =
+    function
+    | `ADD -> "ADD"
+    | `INC -> "INC"
+    | `DEC -> "DEC"
+    | `MOV -> "MOV"
+    | `RET -> "RET"
+
+  let count_instructions =
+    List.fold ~init:empty ~f:(fun acc inst ->
+      Map.change acc (key_of_instruction inst) (fun c ->
+        Some ((Option.value c ~default:0) + 1)
+      )
+    )
+end
+
 let () =
   match bisect instructions with
-  | Ok () -> ()
+  | Ok () ->
+    Map.iter
+      (Counts.count_instructions instructions)
+      ~f:(fun ~key ~data ->
+        printf "%-5s %-3i OK\n" (Counts.key_to_string key) data
+      )
   | Error first ->
     debug first;
     failwith "Disagreed with GNU AS"

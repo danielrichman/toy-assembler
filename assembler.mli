@@ -65,15 +65,16 @@ module Operand : sig
 end
 
 module Instruction : sig
-  type add = { source : Operand.t; dest : Operand.t }
+  type binary_op = { source : Operand.t; dest : Operand.t }
 
   type t =
-    | ADD of add
+    | ADD of binary_op
     | INC of Operand.t
     | DEC of Operand.t
+    | MOV of binary_op
     | RET
 
-  type encoded = [ `Op of Opcode.t | `LE32 of int | `I8 of int ] list
+  type encoded = [ `Op of Opcode.t | `LE32 of int | `LE64 of int | `I8 of int ] list
 
   val parts : t -> encoded
 

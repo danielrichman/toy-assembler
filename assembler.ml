@@ -1,4 +1,5 @@
 open Core.Std
+open Common
 
 module Register = struct
   (* Ordering & info from /asmcomp/amd64/proc.ml *)
@@ -100,7 +101,7 @@ module Operand = struct
     }
 
   type t =
-    | Imm   of int
+    | Imm   of int          (* XXX: really should be int64 *)
     | Reg64 of Register.t
     | Mem64 of mem
 
@@ -178,9 +179,11 @@ module Opcode = struct
     | REX of RexFlags.t
     | ModRM of modrm
     | SIB of sib
-    | ADD of [ `imm32 | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
+    | ADD of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
     | INC
     | DEC
+    | MOV of [ `r64_rm64 | `rm64_r64 | `moffset64_RAX | `RAX_moffset64
+             | `imm64_r64 of int | `imm32_rm64 ]
     | RET
 
   let to_int = function
@@ -195,13 +198,21 @@ module Opcode = struct
       assert (0 <= index && index <= 7);
       assert (0 <= scale && scale <= 3);
       (scale lsl 6) lor (index lsl 3) lor base
-    | ADD `imm32      -> 0x05
+    | ADD `imm32_RAX  -> 0x05
     | ADD `imm32_rm64 -> 0x81
     | ADD `imm8_rm64  -> 0x83
     | ADD `r64_rm64   -> 0x01
     | ADD `rm64_r64   -> 0x03
     | INC -> 0xff
     | DEC -> 0xff
+    | MOV `r64_rm64       -> 0x89
+    | MOV `rm64_r64       -> 0x8B
+    | MOV `moffset64_RAX  -> 0xA1
+    | MOV `RAX_moffset64  -> 0xA3
+    | MOV `imm64_r64 r321 ->
+      assert (0 <= r321 && r321 <= 7);
+      0xB8 + r321
+    | MOV `imm32_rm64     -> 0xC7
     | RET -> 0xc3
 
   let to_char = Fn.compose Char.of_int_exn to_int
@@ -210,38 +221,33 @@ module Opcode = struct
     | REX fls -> sprintf "REX.%s" (RexFlags.to_string fls)
     | ModRM { mod_; reg; rm } -> sprintf "ModRM(m:%i reg:%i r/m:%i)" mod_ reg rm
     | SIB { base; index; scale } -> sprintf "SIB(s:%i i:%i b:%i)" scale index base
-    | ADD `imm32      -> "ADD imm32 RAX"
+    | ADD `imm32_RAX  -> "ADD imm32 RAX"
     | ADD `imm32_rm64 -> "ADD imm32 rm64"
     | ADD `imm8_rm64  -> "ADD imm8 rm64"
     | ADD `r64_rm64   -> "ADD r64 rm64"
     | ADD `rm64_r64   -> "ADD rm64 r64"
+    | MOV `r64_rm64       -> "MOV r64 rm64"
+    | MOV `rm64_r64       -> "MOV rm64 r64"
+    | MOV `moffset64_RAX  -> "MOV moffset64 RAX"
+    | MOV `RAX_moffset64  -> "MOV RAX moffset64"
+    | MOV `imm64_r64 r321 -> sprintf "MOV imm64 r64(%i)" r321
+    | MOV `imm32_rm64     -> "MOV imm32 rm64"
     | INC -> "INC"
     | DEC -> "DEC"
     | RET -> "RET"
 end
 
 module Instruction = struct
-  type add = { source : Operand.t; dest : Operand.t }
+  type binary_op = { source : Operand.t; dest : Operand.t }
 
   type t =
-    | ADD of add
+    | ADD of binary_op
     | INC of Operand.t
     | DEC of Operand.t
+    | MOV of binary_op
     | RET
 
-  type encoded = [ `Op of Opcode.t | `LE32 of int | `I8 of int ] list
-
-  let is_int8 i  = -128 <= i && i <= 127
-  let is_int32 i =
-       (Int32.to_int_exn Int32.min_value) <= i
-    && i <= (Int32.to_int_exn Int32.max_value)
-
-  let immediate_size =
-    function
-    | 0                 -> `Zero
-    | i when is_int8  i -> `I8 i
-    | i when is_int32 i -> `I32 i
-    | i                 -> `I63 i
+  type encoded = [ `Op of Opcode.t | `LE64 of int | `LE32 of int | `I8 of int ] list
 
   (* This concerns the second part of ModRM "r/m" only.
    * The first part "reg" may be a register (direct), or an opcode extn. *)
@@ -495,7 +501,7 @@ module Instruction = struct
     | ADD { source = _; dest = A.Imm _ } ->
       failwith "Immediate can't be the dest of an ADD"
     | ADD { source = A.Mem64 _; dest = A.Mem64 _ } ->
-      failwith "Can't have two memory operands"
+      failwith "ADD can't have two memory operands"
     | ADD { source = A.Imm imm; dest } ->
       let (subvariant, data) =
         match immediate_size imm with
@@ -508,7 +514,7 @@ module Instruction = struct
         (* Optimisation: 05 id is a shorter version of 83 /0,RAX id *)
         match (dest, subvariant) with
         | (A.Reg64 R.RAX, `imm32_rm64) ->
-          make_instruction (C.ADD `imm32) ~data ()
+          make_instruction (C.ADD `imm32_RAX) ~data ()
         | (dest, _) ->
           make_instruction (C.ADD subvariant) ~modrm_sib_disp:(`Op_extn 0, dest) ~data ()
       end
@@ -527,6 +533,29 @@ module Instruction = struct
     | DEC tgt ->
       make_instruction C.DEC ~modrm_sib_disp:(`Op_extn 1, tgt) ()
 
+    | MOV { source = _; dest = A.Imm _ } ->
+      failwith "Immediate can't be the dest of an MOV"
+    | MOV { source = A.Mem64 _; dest = A.Mem64 _ } ->
+      failwith "MOV can't have two memory operands"
+    | MOV { source = A.Imm imm; dest } when is_int32 imm ->
+      make_instruction
+        (C.MOV `imm32_rm64)
+        ~modrm_sib_disp:(`Op_extn 0, dest)
+        ~data:[ `LE32 imm ]
+        ();
+    | MOV { source = A.Imm _; dest = A.Mem64 _ } ->
+      failwith "MOV immediate too large for dest to be memory"
+    | MOV { source = A.Imm imm; dest = A.Reg64 dest_reg } ->
+      let b4, b321 = split_4th (R.operand_number dest_reg) in
+      [ `Op (C.REX C.RexFlags.(set ~w:true ~b:b4 empty))
+      ; `Op (C.MOV (`imm64_r64 b321))
+      ; `LE64 imm
+      ]
+    | MOV { source = A.Reg64 src; dest } ->
+      make_instruction (C.MOV `r64_rm64) ~modrm_sib_disp:(`Reg src, dest) ()
+    | MOV { source = src; dest = A.Reg64 dest } ->
+      make_instruction (C.MOV `rm64_r64) ~modrm_sib_disp:(`Reg dest, src) ()
+
     | RET ->
       (* RET does not need REX.W; it defaults to 64 bits *)
       [ `Op C.RET ]
@@ -536,6 +565,7 @@ module Instruction = struct
       function
       | `Op op  -> Iobuf.Fill.char     buf (Opcode.to_char op)
       | `LE32 v -> Iobuf.Fill.int32_le buf v
+      | `LE64 v -> Iobuf.Fill.int64_le buf v
       | `I8 v   -> Iobuf.Fill.int8     buf v
     )
 
@@ -575,11 +605,15 @@ module Instruction = struct
     Iobuf.flip_lo final;
     Iobuf.to_string final
 
-  let to_string_gas = function
-    | ADD { source; dest } ->
-      sprintf "addq %s,%s" (Operand.to_string_gas source) (Operand.to_string_gas dest)
+  let to_string_gas =
+    let bop mnemonic { source; dest } =
+      sprintf "%s %s,%s" mnemonic (Operand.to_string_gas source) (Operand.to_string_gas dest)
+    in
+    function
+    | ADD args -> bop "addq" args
     | INC tgt -> sprintf "incq %s" (Operand.to_string_gas tgt)
     | DEC tgt -> sprintf "decq %s" (Operand.to_string_gas tgt)
+    | MOV args -> bop "movq" args
     | RET -> "ret"
 end
 
