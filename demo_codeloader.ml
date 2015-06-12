@@ -22,7 +22,9 @@ let code =
            }
 
      (* return a2 + 1 *)
-   ; I.ADD { I.source = A.Imm 2; dest = A.Reg64 arg2 }
+   ; I.ADD { I.source = A.Imm 1; dest = A.Reg64 arg2 }
+   ; I.SHL (A.Reg64 arg2, 1)
+   ; I.BTS { I.bit_no = A.Imm 0; test_val = A.Reg64 arg2 }
    ; I.MOV { I.source = A.Reg64 arg2; dest = A.Reg64 R.calling_ret }
    ; I.RET
    ]
