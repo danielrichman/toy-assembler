@@ -93,6 +93,7 @@ module Instruction : sig
 
   type t =
     | ADD of binary_op
+    | AND of binary_op
     | INC of Operand.t
     | DEC of Operand.t
     | SHL of Operand.t * int
@@ -101,7 +102,7 @@ module Instruction : sig
     | RET
       (* In general, I'm only implementing operations on 64bit registers.
        * However, the SETcc family only operates on bits 0..7 or 8..15 of
-       * registers A, B, C, D. MOVZBL only operates on bits 0..7.
+       * registers A, B, C, D, and MOVZBL only operates on bits 0..7 of the source.
        * These two instructions, a special case, are required to get things
        * out of processor flags.
        * I have only implemented a subset of SET & MOVZX. *)

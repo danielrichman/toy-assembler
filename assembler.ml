@@ -220,6 +220,7 @@ module Opcode = struct
     | ModRM of modrm
     | SIB of sib
     | ADD of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
+    | AND of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
     | INC
     | DEC
     | SHL of [ `one | `imm8 ]
@@ -247,6 +248,11 @@ module Opcode = struct
     | ADD `imm8_rm64  -> [ 0x83 ]
     | ADD `r64_rm64   -> [ 0x01 ]
     | ADD `rm64_r64   -> [ 0x03 ]
+    | AND `imm32_RAX  -> [ 0x25 ]
+    | AND `imm32_rm64 -> [ 0x81 ]
+    | AND `imm8_rm64  -> [ 0x83 ]
+    | AND `r64_rm64   -> [ 0x21 ]
+    | AND `rm64_r64   -> [ 0x23 ]
     | INC -> [ 0xff ]
     | DEC -> [ 0xff ]
     | SHL `one  -> [ 0xD1 ]
@@ -280,27 +286,32 @@ module Opcode = struct
     | SET `ZF0_and_SF_eq_OF -> [ 0x0F; 0x9F ]
     | MOVZBQ -> [ 0x0F; 0xB6 ]
 
-  let to_string_hum = function
+  let to_string_hum =
+    let subvariant_to_string_hum =
+      function
+      | `imm32_RAX  -> "imm32 RAX"
+      | `imm32_rm64 -> "imm32 rm64"
+      | `imm8_rm64  -> "imm8 rm64"
+      | `r64_rm64   -> "r64 rm64"
+      | `rm64_r64   -> "rm64 r64"
+      | `moffset64_RAX  -> "moffset64 RAX"
+      | `RAX_moffset64  -> "RAX moffset64"
+      | `one -> "1"
+      | `imm8 -> "imm8"
+      | `imm64_r64 r321 -> sprintf "imm64 r64(%i)" r321
+    in
+
+    function
     | REX fls -> sprintf "REX.%s" (RexFlags.to_string fls)
     | ModRM { mod_; reg; rm } -> sprintf "ModRM(m:%i reg:%i r/m:%i)" mod_ reg rm
     | SIB { base; index; scale } -> sprintf "SIB(s:%i i:%i b:%i)" scale index base
-    | ADD `imm32_RAX  -> "ADD imm32 RAX"
-    | ADD `imm32_rm64 -> "ADD imm32 rm64"
-    | ADD `imm8_rm64  -> "ADD imm8 rm64"
-    | ADD `r64_rm64   -> "ADD r64 rm64"
-    | ADD `rm64_r64   -> "ADD rm64 r64"
-    | MOV `r64_rm64       -> "MOV r64 rm64"
-    | MOV `rm64_r64       -> "MOV rm64 r64"
-    | MOV `moffset64_RAX  -> "MOV moffset64 RAX"
-    | MOV `RAX_moffset64  -> "MOV RAX moffset64"
-    | MOV `imm64_r64 r321 -> sprintf "MOV imm64 r64(%i)" r321
-    | MOV `imm32_rm64     -> "MOV imm32 rm64"
+    | ADD sv -> "ADD " ^ subvariant_to_string_hum sv
+    | AND sv -> "AND " ^ subvariant_to_string_hum sv
+    | MOV sv -> "MOV " ^ subvariant_to_string_hum sv
     | INC -> "INC"
     | DEC -> "DEC"
-    | SHL `one  -> "SHL 1"
-    | SHL `imm8 -> "SHL imm8"
-    | SHR `one  -> "SHR 1"
-    | SHR `imm8 -> "SHR imm8"
+    | SHL sv -> "SHL " ^ subvariant_to_string_hum sv
+    | SHR sv -> "SHR " ^ subvariant_to_string_hum sv
     | RET -> "RET"
     | SET `OF1  -> "SET OF=1"
     | SET `OF0  -> "SET OF=0"
@@ -337,6 +348,7 @@ module Instruction = struct
 
   type t =
     | ADD of binary_op
+    | AND of binary_op
     | INC of Operand.t
     | DEC of Operand.t
     | SHL of Operand.t * int
@@ -592,35 +604,52 @@ module Instruction = struct
     in
     instruction
 
-  let parts =
+  (* Most bops follow this pattern
+   * BOP imm32 RAX           C1 id
+   * BOP imm32 reg/mem64     C2 /extn id
+   * BOP imm8  reg/mem64     C3 /extn ib
+   * BOP reg64 reg/mem64     C4 /r
+   * BOP reg64/mem reg64     C5 /r *)
+  let typical_binary_op opcode_constr ~opcode_extn =
     let module A = Operand in
-    let module C = Opcode in
     let module R = Register in
     function
-    | ADD { source = _; dest = A.Imm _ } ->
-      failwith "Immediate can't be the dest of an ADD"
-    | ADD { source = A.Mem64 _; dest = A.Mem64 _ } ->
-      failwith "ADD can't have two memory operands"
-    | ADD { source = A.Imm imm; dest } ->
+    | { source = _; dest = A.Imm _ } ->
+      failwith "Immediate can't be the dest of a BOP"
+    | { source = A.Mem64 _; dest = A.Mem64 _ } ->
+      failwith "BOP can't have two memory operands"
+    | { source = A.Imm imm; dest } ->
       let (subvariant, data) =
         match immediate_size imm with
         | `Zero   -> (`imm8_rm64,  [ `I8 0 ])
         | `I8 i   -> (`imm8_rm64,  [ `I8 i ])
         | `I32 i  -> (`imm32_rm64, [ `LE32 i ])
-        | `I63 _  -> failwith "Immediate too large for ADD"
+        | `I63 _  -> failwith "Immediate too large for BOP"
       in
       begin
         (* Optimisation: 05 id is a shorter version of 83 /0,RAX id *)
         match (dest, subvariant) with
         | (A.Reg64 R.RAX, `imm32_rm64) ->
-          make_instruction (C.ADD `imm32_RAX) ~data ()
+          make_instruction (opcode_constr `imm32_RAX) ~data ()
         | (dest, _) ->
-          make_instruction (C.ADD subvariant) ~modrm_sib_disp:(`Op_extn 0, dest) ~data ()
+          make_instruction
+            (opcode_constr subvariant)
+            ~modrm_sib_disp:(`Op_extn opcode_extn, dest)
+            ~data
+            ()
       end
-    | ADD { source = A.Reg64 src; dest } ->
-      make_instruction (C.ADD `r64_rm64) ~modrm_sib_disp:(`Reg src, dest) ()
-    | ADD { source = src; dest = A.Reg64 dest } ->
-      make_instruction (C.ADD `rm64_r64) ~modrm_sib_disp:(`Reg dest, src) ()
+    | { source = A.Reg64 src; dest } ->
+      make_instruction (opcode_constr `r64_rm64) ~modrm_sib_disp:(`Reg src, dest) ()
+    | { source = src; dest = A.Reg64 dest } ->
+      make_instruction (opcode_constr `rm64_r64) ~modrm_sib_disp:(`Reg dest, src) ()
+
+  let parts =
+    let module A = Operand in
+    let module C = Opcode in
+    let module R = Register in
+    function
+    | ADD sd -> typical_binary_op (fun x -> C.ADD x) ~opcode_extn:0 sd
+    | AND sd -> typical_binary_op (fun x -> C.AND x) ~opcode_extn:4 sd
 
     | INC (A.Imm _) ->
       failwith "Can't increment an immediate"
@@ -761,6 +790,7 @@ module Instruction = struct
     in
     function
     | ADD args -> bop "addq" args
+    | AND args -> bop "andq" args
     | INC tgt -> sprintf "incq %s" (Operand.to_string_gas tgt)
     | DEC tgt -> sprintf "decq %s" (Operand.to_string_gas tgt)
     | SHL (tgt, bts) -> sprintf "shlq $%i,%s" bts (Operand.to_string_gas tgt)
