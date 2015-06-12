@@ -91,6 +91,8 @@ module Instruction : sig
     | `ZF1_or_SF_ne_OF | `ZF0_and_SF_eq_OF
     ]
 
+  type bit_test_args = { test_val : Operand.t; bit_no : Operand.t }
+
   type t =
     | ADD of binary_op
     | AND of binary_op
@@ -112,6 +114,10 @@ module Instruction : sig
     | MOVZBQ of Register.B8.t * Register.t
     | PUSH of Operand.t
     | POP of Operand.t
+    | BT  of bit_test_args
+    | BTC of bit_test_args
+    | BTR of bit_test_args
+    | BTS of bit_test_args
 
   type encoded = [ `Op of Opcode.t | `LE32 of int | `LE64 of int | `I8 of int ] list
 

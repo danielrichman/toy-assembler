@@ -234,6 +234,10 @@ module Opcode = struct
     | MOVZBQ
     | PUSH of [ `rm64 | `r64 of int | `imm8 | `imm32 ]
     | POP  of [ `rm64 | `r64 of int ]
+    | BT  of [ `rm64_r64 | `rm64_imm8 ]
+    | BTC of [ `rm64_r64 | `rm64_imm8 ]
+    | BTR of [ `rm64_r64 | `rm64_imm8 ]
+    | BTS of [ `rm64_r64 | `rm64_imm8 ]
 
   let to_ints = function
     | REX fls -> [ 0x40 lor (RexFlags.to_int fls) ]
@@ -309,6 +313,14 @@ module Opcode = struct
     | POP (`r64 r321) ->
       assert (0 <= r321 && r321 <= 7);
       [ 0x58 + r321 ]
+    | BT  `rm64_r64  -> [ 0x0F; 0xA3 ]
+    | BT  `rm64_imm8 -> [ 0x0F; 0xBA ]
+    | BTC `rm64_r64  -> [ 0x0F; 0xBB ]
+    | BTC `rm64_imm8 -> [ 0x0F; 0xBA ]
+    | BTR `rm64_r64  -> [ 0x0F; 0xB3 ]
+    | BTR `rm64_imm8 -> [ 0x0F; 0xBA ]
+    | BTS `rm64_r64  -> [ 0x0F; 0xAB ]
+    | BTS `rm64_imm8 -> [ 0x0F; 0xBA ]
 
   let to_string_hum =
     let subvariant_to_string_hum =
@@ -326,6 +338,7 @@ module Opcode = struct
       | `imm64_r64 r321 -> sprintf "imm64 r64(%i)" r321
       | `r64 r321 -> sprintf "r64(%i)" r321
       | `rm64 -> "rm64"
+      | `rm64_imm8 -> "rm64 imm8"
     in
     function
     | REX fls -> sprintf "REX.%s" (RexFlags.to_string fls)
@@ -360,6 +373,11 @@ module Opcode = struct
     | MOVZBQ -> "MOVZBQ"
     | PUSH sv -> "PUSH " ^ subvariant_to_string_hum sv
     | POP  sv -> "POP "  ^ subvariant_to_string_hum sv
+    | BT   sv -> "BT "   ^ subvariant_to_string_hum sv
+    | BTC  sv -> "BTC "  ^ subvariant_to_string_hum sv
+    | BTR  sv -> "BTR "  ^ subvariant_to_string_hum sv
+    | BTS  sv -> "BTS "  ^ subvariant_to_string_hum sv
+
 end
 
 module Instruction = struct
@@ -376,6 +394,8 @@ module Instruction = struct
     | `ZF1_or_SF_ne_OF | `ZF0_and_SF_eq_OF
     ]
 
+  type bit_test_args = { test_val : Operand.t; bit_no : Operand.t }
+
   type t =
     | ADD of binary_op
     | AND of binary_op
@@ -391,6 +411,10 @@ module Instruction = struct
     | MOVZBQ of Register.B8.t * Register.t
     | PUSH of Operand.t
     | POP  of Operand.t
+    | BT  of bit_test_args
+    | BTC of bit_test_args
+    | BTR of bit_test_args
+    | BTS of bit_test_args
 
   type encoded = [ `Op of Opcode.t | `LE64 of int | `LE32 of int | `I8 of int ] list
 
@@ -677,6 +701,25 @@ module Instruction = struct
     | { source = src; dest = A.Reg64 dest } ->
       make_instruction (opcode_constr `rm64_r64) ~modrm_sib_disp:(`Reg dest, src) ()
 
+  let typical_bit_test opcode_constr ~opcode_extn =
+    let module A = Operand in
+    function
+    | { test_val = A.Imm _; _ } ->
+      failwith "Can't bit-test an immediate"
+    | { bit_no = A.Mem64 _; _ } ->
+      failwith "Can't use memory as bit number in a bit-test"
+    | { test_val; bit_no = A.Imm imm } ->
+      make_instruction
+        (opcode_constr `rm64_imm8)
+        ~modrm_sib_disp:(`Op_extn opcode_extn, test_val)
+        ~data:[ `I8 imm ]
+        ()
+    | { test_val; bit_no = A.Reg64 bit_no } ->
+      make_instruction
+        (opcode_constr `rm64_r64)
+        ~modrm_sib_disp:(`Reg bit_no, test_val)
+        ()
+
   let parts =
     let module A = Operand in
     let module C = Opcode in
@@ -795,6 +838,11 @@ module Instruction = struct
         ~modrm_sib_disp:(`Op_extn 0, A.Mem64 src)
         ()
 
+    | BT  args -> typical_bit_test (fun s -> C.BT  s) ~opcode_extn:4 args
+    | BTC args -> typical_bit_test (fun s -> C.BTC s) ~opcode_extn:7 args
+    | BTR args -> typical_bit_test (fun s -> C.BTR s) ~opcode_extn:6 args
+    | BTS args -> typical_bit_test (fun s -> C.BTS s) ~opcode_extn:5 args
+
   let assemble_into t buf =
     List.iter (parts t) ~f:(
       function
@@ -861,7 +909,16 @@ module Instruction = struct
 
   let to_string_gas =
     let bop mnemonic { source; dest } =
-      sprintf "%s %s,%s" mnemonic (Operand.to_string_gas source) (Operand.to_string_gas dest)
+      sprintf "%s %s,%s"
+        mnemonic
+        (Operand.to_string_gas source)
+        (Operand.to_string_gas dest)
+    in
+    let bt mnemonic { test_val; bit_no } =
+      sprintf "%s %s,%s"
+        mnemonic
+        (Operand.to_string_gas bit_no)
+        (Operand.to_string_gas test_val)
     in
     function
     | ADD args -> bop "addq" args
@@ -882,6 +939,10 @@ module Instruction = struct
       sprintf "movzbq %s,%s" (Register.B8.to_string_gas src) (Register.to_string_gas dest)
     | PUSH src -> "pushq " ^ Operand.to_string_gas src
     | POP  src -> "popq "  ^ Operand.to_string_gas src
+    | BT  args -> bt "btq"  args
+    | BTC args -> bt "btcq" args
+    | BTR args -> bt "btrq" args
+    | BTS args -> bt "btsq" args
 end
 
 module Std = struct

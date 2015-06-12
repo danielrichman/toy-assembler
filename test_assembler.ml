@@ -146,6 +146,24 @@ let instructions =
         Assembler.Instruction.MOVZBQ (source, dest)
       )
     )
+
+  ; (* BT, BTC, BTS, BTR *)
+    begin
+      let open Assembler.Std in
+      let bit_nos = [ A.Imm 0; A.Imm 3; A.Imm 30; A.Imm 63 ] in
+      let test_vals =
+        List.filter operands ~f:(function
+          | A.Imm _ -> false
+          | _ -> true
+        )
+      in
+      List.concat_map bit_nos ~f:(fun bit_no ->
+        List.concat_map test_vals ~f:(fun test_val ->
+          let args = { I.bit_no; test_val } in
+          [ I.BT args; I.BTC args; I.BTR args; I.BTS args ]
+        )
+      )
+    end
   ]
   |> List.concat
 
@@ -246,6 +264,7 @@ module Counts = struct
     | INC | DEC | SHL | SHR
     | MOV | RET | SET | MOVZBQ
     | PUSH | POP
+    | BT | BTC | BTR | BTS
   with compare, sexp
 
   include Map.Make(struct type t = key with compare, sexp end)
@@ -267,6 +286,10 @@ module Counts = struct
     | I.MOVZBQ _ -> MOVZBQ
     | I.PUSH _ -> PUSH
     | I.POP _ -> POP
+    | I.BT  _ -> BT
+    | I.BTC _ -> BTC
+    | I.BTS _ -> BTS
+    | I.BTR _ -> BTR
 
   let key_to_string =
     function
@@ -284,6 +307,10 @@ module Counts = struct
     | MOVZBQ -> "MOVZBQ"
     | PUSH -> "PUSH"
     | POP -> "POP"
+    | BT  -> "BT"
+    | BTC -> "BTC"
+    | BTS -> "BTS"
+    | BTR -> "BTR"
 
   let count_instructions =
     List.fold ~init:empty ~f:(fun acc inst ->
