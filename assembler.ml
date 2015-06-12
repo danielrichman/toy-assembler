@@ -233,6 +233,7 @@ module Opcode = struct
     | SET of set_condition
     | MOVZBQ
     | PUSH of [ `rm64 | `r64 of int | `imm8 | `imm32 ]
+    | POP  of [ `rm64 | `r64 of int ]
 
   let to_ints = function
     | REX fls -> [ 0x40 lor (RexFlags.to_int fls) ]
@@ -304,6 +305,10 @@ module Opcode = struct
       [ 0x50 + r321 ]
     | PUSH `imm8  -> [ 0x6A ]
     | PUSH `imm32 -> [ 0x68 ]
+    | POP `rm64 -> [ 0x8F ]
+    | POP (`r64 r321) ->
+      assert (0 <= r321 && r321 <= 7);
+      [ 0x58 + r321 ]
 
   let to_string_hum =
     let subvariant_to_string_hum =
@@ -354,6 +359,7 @@ module Opcode = struct
     | SET `ZF0_and_SF_eq_OF -> "SET ZF=0 && SF=OF"
     | MOVZBQ -> "MOVZBQ"
     | PUSH sv -> "PUSH " ^ subvariant_to_string_hum sv
+    | POP  sv -> "POP "  ^ subvariant_to_string_hum sv
 end
 
 module Instruction = struct
@@ -384,6 +390,7 @@ module Instruction = struct
     | SET of set_condition * Register.B8.t
     | MOVZBQ of Register.B8.t * Register.t
     | PUSH of Operand.t
+    | POP  of Operand.t
 
   type encoded = [ `Op of Opcode.t | `LE64 of int | `LE32 of int | `I8 of int ] list
 
@@ -774,6 +781,20 @@ module Instruction = struct
         ~modrm_sib_disp:(`Op_extn 6, A.Mem64 src)
         ()
 
+    | POP (A.Imm _) ->
+      failwith "Can't POP into an immediate"
+    | POP (A.Reg64 src) ->
+      let r4, r321 = split_4th (R.operand_number src) in
+      let i = `Op (C.POP (`r64 r321)) in
+      if r4
+      then [ `Op (C.REX C.RexFlags.(set ~b:true empty)); i ]
+      else [ i ]
+    | POP (A.Mem64 src) ->
+      make_instruction
+        ~rex_w:false (C.POP `rm64)
+        ~modrm_sib_disp:(`Op_extn 0, A.Mem64 src)
+        ()
+
   let assemble_into t buf =
     List.iter (parts t) ~f:(
       function
@@ -860,6 +881,7 @@ module Instruction = struct
     | MOVZBQ (src, dest) ->
       sprintf "movzbq %s,%s" (Register.B8.to_string_gas src) (Register.to_string_gas dest)
     | PUSH src -> "pushq " ^ Operand.to_string_gas src
+    | POP  src -> "popq "  ^ Operand.to_string_gas src
 end
 
 module Std = struct
