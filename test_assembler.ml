@@ -70,6 +70,7 @@ let operand_pairs ~f =
   )
 
 let instructions =
+  let reg_b8s = Assembler.Register.B8.([ AL; BL; CL; DL ]) in
   [ (* ADD *)
     begin
       let args = operand_pairs ~f:(
@@ -122,19 +123,25 @@ let instructions =
 
   ; (* SETcc *)
     begin
-      let r8s = Assembler.Register.B8.([ AL; BL; CL; DL; AH; BH; CH; DH ]) in
       let conds = 
         [ `OF1 ; `OF0 ; `CF1 ; `CF0 ; `ZF1 ; `ZF0 ; `SF1 ; `SF0 ; `PF1 ; `PF0 
         ; `CF1_or_ZF1 ; `CF0_and_ZF0 ; `SF_ne_OF ; `SF_eq_OF
         ; `ZF1_or_SF_ne_OF ; `ZF0_and_SF_eq_OF
         ]
       in
-      List.concat_map r8s ~f:(fun reg ->
+      List.concat_map reg_b8s ~f:(fun reg ->
         List.map conds ~f:(fun cond ->
           Assembler.Instruction.SET (cond, reg)
         )
       )
     end
+
+  ; (* MOVZBQ *)
+    List.concat_map reg_b8s ~f:(fun source ->
+      List.map Assembler.Register.([ RAX; RDX; RSP; R8; R13 ]) ~f:(fun dest ->
+        Assembler.Instruction.MOVZBQ (source, dest)
+      )
+    )
   ]
   |> List.concat
 
@@ -224,40 +231,43 @@ let rec bisect =
     then Ok ()
     else begin
       let l, r = List.split_n many (List.length many / 2) in
-      Result.bind (bisect l) (fun () -> bisect r)
+      let err = Result.bind (bisect l) (fun () -> bisect r) in
+      assert (Result.is_error err);
+      err
     end
 
 module Counts = struct
-  include Map.Make(struct
-    type t =
-      [ `ADD | `INC | `DEC | `SHL | `SHR
-      | `MOV | `RET | `SET
-      ]
-    with compare, sexp
-  end)
+  type key =
+    | ADD | INC | DEC | SHL | SHR
+    | MOV | RET | SET | MOVZBQ
+  with compare, sexp
+
+  include Map.Make(struct type t = key with compare, sexp end)
 
   let key_of_instruction =
     let open Assembler.Std in
     function
-    | I.ADD _ -> `ADD
-    | I.INC _ -> `INC
-    | I.DEC _ -> `DEC
-    | I.MOV _ -> `MOV
-    | I.SHL _ -> `SHL
-    | I.SHR _ -> `SHR
-    | I.RET -> `RET
-    | I.SET _ -> `SET
+    | I.ADD _ -> ADD
+    | I.INC _ -> INC
+    | I.DEC _ -> DEC
+    | I.MOV _ -> MOV
+    | I.SHL _ -> SHL
+    | I.SHR _ -> SHR
+    | I.RET -> RET
+    | I.SET _ -> SET
+    | I.MOVZBQ _ -> MOVZBQ
 
   let key_to_string =
     function
-    | `ADD -> "ADD"
-    | `INC -> "INC"
-    | `DEC -> "DEC"
-    | `SHL -> "SHL"
-    | `SHR -> "SHR"
-    | `MOV -> "MOV"
-    | `RET -> "RET"
-    | `SET -> "SET"
+    | ADD -> "ADD"
+    | INC -> "INC"
+    | DEC -> "DEC"
+    | SHL -> "SHL"
+    | SHR -> "SHR"
+    | MOV -> "MOV"
+    | RET -> "RET"
+    | SET -> "SET"
+    | MOVZBQ -> "MOVZBQ"
 
   let count_instructions =
     List.fold ~init:empty ~f:(fun acc inst ->
@@ -273,7 +283,7 @@ let () =
     Map.iter
       (Counts.count_instructions instructions)
       ~f:(fun ~key ~data ->
-        printf "%-5s %-3i OK\n" (Counts.key_to_string key) data
+        printf "%-6s %-3i OK\n" (Counts.key_to_string key) data
       )
   | Error first ->
     debug first;

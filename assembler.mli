@@ -35,8 +35,7 @@ module Register : sig
   val to_string_gas : t -> string
 
   (* In general, I'm only implementing operations on 64bit registers.
-   * However, the SETcc series of instructions (understandably) only
-   * work on 8bit registers, and thus we need these as a special case: *)
+   * See Instruction.SET *)
   module B8 : sig
     type reg64 = t
     type t =
@@ -44,12 +43,8 @@ module Register : sig
       | BL
       | CL
       | DL
-      | AH
-      | BH
-      | CH
-      | DH
 
-    val of_reg64 : reg64 -> [ `L | `H ] -> t
+    val of_reg64 : reg64 -> t
     val to_string_gas : t -> string
   end
 end
@@ -104,9 +99,14 @@ module Instruction : sig
     | SHR of Operand.t * int
     | MOV of binary_op
     | RET
-      (* Simly to Register.B8 comments, this is only a subset of
-       * the SETcc family. *)
+      (* In general, I'm only implementing operations on 64bit registers.
+       * However, the SETcc family only operates on bits 0..7 or 8..15 of
+       * registers A, B, C, D. MOVZBL only operates on bits 0..7.
+       * These two instructions, a special case, are required to get things
+       * out of processor flags.
+       * I have only implemented a subset of SET & MOVZX. *)
     | SET of set_condition * Register.B8.t
+    | MOVZBQ of Register.B8.t * Register.t
 
   type encoded = [ `Op of Opcode.t | `LE32 of int | `LE64 of int | `I8 of int ] list
 

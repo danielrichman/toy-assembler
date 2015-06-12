@@ -94,42 +94,26 @@ module Register = struct
       | BL
       | CL
       | DL
-      | AH
-      | BH
-      | CH
-      | DH
 
-    let of_reg64 reg lowhi =
-      match (reg, lowhi) with
-      | (RAX, `L) -> AL
-      | (RAX, `H) -> AH
-      | (RBX, `L) -> BL
-      | (RBX, `H) -> BH
-      | (RCX, `L) -> CL
-      | (RCX, `H) -> CH
-      | (RDX, `L) -> DL
-      | (RDX, `H) -> DH
-      | (_, (`L|`H)) -> failwith "Register does not have a B8 part"
+    let of_reg64 =
+      function
+      | RAX -> AL
+      | RBX -> BL
+      | RCX -> CL
+      | RDX -> DL
+      | _ -> failwith "Register does not have a B8 part"
 
     let operand_number = function
       | AL -> 0
       | BL -> 3
       | CL -> 1
       | DL -> 2
-      | AH -> 4 + 0
-      | BH -> 4 + 3
-      | CH -> 4 + 1
-      | DH -> 4 + 2
 
     let to_string_gas = function
       | AL -> "%al"
       | BL -> "%bl"
       | CL -> "%cl"
       | DL -> "%dl"
-      | AH -> "%ah"
-      | BH -> "%bh"
-      | CH -> "%ch"
-      | DH -> "%dh"
   end
 end
 
@@ -244,6 +228,7 @@ module Opcode = struct
              | `imm64_r64 of int | `imm32_rm64 ]
     | RET
     | SET of set_condition
+    | MOVZBQ
 
   let to_ints = function
     | REX fls -> [ 0x40 lor (RexFlags.to_int fls) ]
@@ -293,6 +278,7 @@ module Opcode = struct
     | SET `SF_eq_OF -> [ 0x0F; 0x9D ]
     | SET `ZF1_or_SF_ne_OF  -> [ 0x0F; 0x9E ]
     | SET `ZF0_and_SF_eq_OF -> [ 0x0F; 0x9F ]
+    | MOVZBQ -> [ 0x0F; 0xB6 ]
 
   let to_string_hum = function
     | REX fls -> sprintf "REX.%s" (RexFlags.to_string fls)
@@ -332,6 +318,7 @@ module Opcode = struct
     | SET `SF_eq_OF -> "SET SF=OF"
     | SET `ZF1_or_SF_ne_OF  -> "SET ZF=1 || SF<>OF"
     | SET `ZF0_and_SF_eq_OF -> "SET ZF=0 && SF=OF"
+    | MOVZBQ -> "MOVZBQ"
 end
 
 module Instruction = struct
@@ -357,6 +344,7 @@ module Instruction = struct
     | MOV of binary_op
     | RET
     | SET of set_condition * Register.B8.t
+    | MOVZBQ of Register.B8.t * Register.t
 
   type encoded = [ `Op of Opcode.t | `LE64 of int | `LE32 of int | `I8 of int ] list
 
@@ -690,9 +678,17 @@ module Instruction = struct
       [ `Op C.RET ]
 
     | SET (cond, tgt) ->
-      let rm = Register.B8.operand_number tgt in
+      let rm = R.B8.operand_number tgt in
       [ `Op (C.SET cond)
       ; `Op (C.ModRM { C.mod_ = 0b11; reg = 0; rm })
+      ]
+
+    | MOVZBQ (source, dest) ->
+      let rm = R.B8.operand_number source in
+      let r4, r321 = split_4th (R.operand_number dest) in
+      [ `Op (C.REX C.RexFlags.(set ~w:true ~r:r4 empty))
+      ; `Op C.MOVZBQ
+      ; `Op (C.ModRM { C.mod_ = 0b11; reg = r321; rm })
       ]
 
   let assemble_into t buf =
@@ -775,6 +771,8 @@ module Instruction = struct
       sprintf "set%s %s"
         (set_condition_to_string_gas cond)
         (Register.B8.to_string_gas tgt)
+    | MOVZBQ (src, dest) ->
+      sprintf "movzbq %s,%s" (Register.B8.to_string_gas src) (Register.to_string_gas dest)
 end
 
 module Std = struct
