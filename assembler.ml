@@ -394,7 +394,7 @@ module Instruction = struct
     | `ZF1_or_SF_ne_OF | `ZF0_and_SF_eq_OF
     ]
 
-  type bit_test_args = { test_val : Operand.t; bit_no : Operand.t }
+  type bit_test_args = { target : Operand.t; bit : Operand.t }
 
   type t =
     | ADD of binary_op
@@ -704,20 +704,20 @@ module Instruction = struct
   let typical_bit_test opcode_constr ~opcode_extn =
     let module A = Operand in
     function
-    | { test_val = A.Imm _; _ } ->
+    | { target = A.Imm _; _ } ->
       failwith "Can't bit-test an immediate"
-    | { bit_no = A.Mem64 _; _ } ->
+    | { bit = A.Mem64 _; _ } ->
       failwith "Can't use memory as bit number in a bit-test"
-    | { test_val; bit_no = A.Imm imm } ->
+    | { target; bit = A.Imm imm } ->
       make_instruction
         (opcode_constr `rm64_imm8)
-        ~modrm_sib_disp:(`Op_extn opcode_extn, test_val)
+        ~modrm_sib_disp:(`Op_extn opcode_extn, target)
         ~data:[ `I8 imm ]
         ()
-    | { test_val; bit_no = A.Reg64 bit_no } ->
+    | { target; bit = A.Reg64 bit } ->
       make_instruction
         (opcode_constr `rm64_r64)
-        ~modrm_sib_disp:(`Reg bit_no, test_val)
+        ~modrm_sib_disp:(`Reg bit, target)
         ()
 
   let parts =
@@ -914,11 +914,11 @@ module Instruction = struct
         (Operand.to_string_gas source)
         (Operand.to_string_gas dest)
     in
-    let bt mnemonic { test_val; bit_no } =
+    let bt mnemonic { target; bit } =
       sprintf "%s %s,%s"
         mnemonic
-        (Operand.to_string_gas bit_no)
-        (Operand.to_string_gas test_val)
+        (Operand.to_string_gas bit)
+        (Operand.to_string_gas target)
     in
     function
     | ADD args -> bop "addq" args

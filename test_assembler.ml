@@ -150,16 +150,16 @@ let instructions =
   ; (* BT, BTC, BTS, BTR *)
     begin
       let open Assembler.Std in
-      let bit_nos = [ A.Imm 0; A.Imm 3; A.Imm 30; A.Imm 63 ] in
-      let test_vals =
+      let bits = [ A.Imm 0; A.Imm 3; A.Imm 30; A.Imm 63 ] in
+      let targets =
         List.filter operands ~f:(function
           | A.Imm _ -> false
           | _ -> true
         )
       in
-      List.concat_map bit_nos ~f:(fun bit_no ->
-        List.concat_map test_vals ~f:(fun test_val ->
-          let args = { I.bit_no; test_val } in
+      List.concat_map bits ~f:(fun bit ->
+        List.concat_map targets ~f:(fun target ->
+          let args = { I.bit; target } in
           [ I.BT args; I.BTC args; I.BTR args; I.BTS args ]
         )
       )

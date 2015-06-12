@@ -91,7 +91,7 @@ module Instruction : sig
     | `ZF1_or_SF_ne_OF | `ZF0_and_SF_eq_OF
     ]
 
-  type bit_test_args = { test_val : Operand.t; bit_no : Operand.t }
+  type bit_test_args = { target : Operand.t; bit : Operand.t }
 
   type t =
     | ADD of binary_op
