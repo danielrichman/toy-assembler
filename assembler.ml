@@ -86,6 +86,51 @@ module Register = struct
     | R15 -> "%r15"
     | RSP -> "%rsp"
     | RIP -> "%rip"
+
+  module B8 = struct
+    type reg64 = t
+    type t =
+      | AL
+      | BL
+      | CL
+      | DL
+      | AH
+      | BH
+      | CH
+      | DH
+
+    let of_reg64 reg lowhi =
+      match (reg, lowhi) with
+      | (RAX, `L) -> AL
+      | (RAX, `H) -> AH
+      | (RBX, `L) -> BL
+      | (RBX, `H) -> BH
+      | (RCX, `L) -> CL
+      | (RCX, `H) -> CH
+      | (RDX, `L) -> DL
+      | (RDX, `H) -> DH
+      | (_, (`L|`H)) -> failwith "Register does not have a B8 part"
+
+    let operand_number = function
+      | AL -> 0
+      | BL -> 3
+      | CL -> 1
+      | DL -> 2
+      | AH -> 4 + 0
+      | BH -> 4 + 3
+      | CH -> 4 + 1
+      | DH -> 4 + 2
+
+    let to_string_gas = function
+      | AL -> "%al"
+      | BL -> "%bl"
+      | CL -> "%cl"
+      | DL -> "%dl"
+      | AH -> "%ah"
+      | BH -> "%bh"
+      | CH -> "%ch"
+      | DH -> "%dh"
+  end
 end
 
 module Operand = struct
@@ -175,6 +220,17 @@ module Opcode = struct
   type modrm = { mod_ : int; reg : int; rm : int }
   type sib = { base : int; index : int; scale : int }
 
+  type set_condition =
+    [ `OF1 | `OF0
+    | `CF1 | `CF0
+    | `ZF1 | `ZF0
+    | `CF1_or_ZF1 | `CF0_and_ZF0
+    | `SF1 | `SF0
+    | `PF1 | `PF0 
+    | `SF_ne_OF | `SF_eq_OF
+    | `ZF1_or_SF_ne_OF | `ZF0_and_SF_eq_OF
+    ]   
+
   type t =
     | REX of RexFlags.t
     | ModRM of modrm
@@ -187,41 +243,56 @@ module Opcode = struct
     | MOV of [ `r64_rm64 | `rm64_r64 | `moffset64_RAX | `RAX_moffset64
              | `imm64_r64 of int | `imm32_rm64 ]
     | RET
+    | SET of set_condition
 
-  let to_int = function
-    | REX fls -> 0x40 lor (RexFlags.to_int fls)
+  let to_ints = function
+    | REX fls -> [ 0x40 lor (RexFlags.to_int fls) ]
     | ModRM { mod_; reg; rm } ->
       assert (0 <= mod_ && mod_ <= 3);
       assert (0 <= reg  && reg  <= 7);
       assert (0 <= rm   && rm   <= 7);
-      (mod_ lsl 6) lor (reg  lsl 3) lor rm
+      [ (mod_ lsl 6) lor (reg  lsl 3) lor rm ]
     | SIB { base; index; scale } ->
       assert (0 <= base  && base <= 7);
       assert (0 <= index && index <= 7);
       assert (0 <= scale && scale <= 3);
-      (scale lsl 6) lor (index lsl 3) lor base
-    | ADD `imm32_RAX  -> 0x05
-    | ADD `imm32_rm64 -> 0x81
-    | ADD `imm8_rm64  -> 0x83
-    | ADD `r64_rm64   -> 0x01
-    | ADD `rm64_r64   -> 0x03
-    | INC -> 0xff
-    | DEC -> 0xff
-    | SHL `one  -> 0xD1
-    | SHL `imm8 -> 0xC1
-    | SHR `one  -> 0xD1
-    | SHR `imm8 -> 0xC1
-    | MOV `r64_rm64       -> 0x89
-    | MOV `rm64_r64       -> 0x8B
-    | MOV `moffset64_RAX  -> 0xA1
-    | MOV `RAX_moffset64  -> 0xA3
+      [ (scale lsl 6) lor (index lsl 3) lor base ]
+    | ADD `imm32_RAX  -> [ 0x05 ]
+    | ADD `imm32_rm64 -> [ 0x81 ]
+    | ADD `imm8_rm64  -> [ 0x83 ]
+    | ADD `r64_rm64   -> [ 0x01 ]
+    | ADD `rm64_r64   -> [ 0x03 ]
+    | INC -> [ 0xff ]
+    | DEC -> [ 0xff ]
+    | SHL `one  -> [ 0xD1 ]
+    | SHL `imm8 -> [ 0xC1 ]
+    | SHR `one  -> [ 0xD1 ]
+    | SHR `imm8 -> [ 0xC1 ]
+    | MOV `r64_rm64       -> [ 0x89 ]
+    | MOV `rm64_r64       -> [ 0x8B ]
+    | MOV `moffset64_RAX  -> [ 0xA1 ]
+    | MOV `RAX_moffset64  -> [ 0xA3 ]
     | MOV `imm64_r64 r321 ->
       assert (0 <= r321 && r321 <= 7);
-      0xB8 + r321
-    | MOV `imm32_rm64     -> 0xC7
-    | RET -> 0xc3
-
-  let to_char = Fn.compose Char.of_int_exn to_int
+      [ 0xB8 + r321 ]
+    | MOV `imm32_rm64     -> [ 0xC7 ]
+    | RET -> [ 0xc3 ]
+    | SET `OF1  -> [ 0x0F; 0x90 ]
+    | SET `OF0  -> [ 0x0F; 0x91 ]
+    | SET `CF1  -> [ 0x0F; 0x92 ]
+    | SET `CF0  -> [ 0x0F; 0x93 ]
+    | SET `ZF1  -> [ 0x0F; 0x94 ]
+    | SET `ZF0  -> [ 0x0F; 0x95 ]
+    | SET `CF1_or_ZF1   -> [ 0x0F; 0x96 ]
+    | SET `CF0_and_ZF0  -> [ 0x0F; 0x97 ]
+    | SET `SF1  -> [ 0x0F; 0x98 ]
+    | SET `SF0  -> [ 0x0F; 0x99 ]
+    | SET `PF1  -> [ 0x0F; 0x9A ]
+    | SET `PF0  -> [ 0x0F; 0x9B ]
+    | SET `SF_ne_OF -> [ 0x0F; 0x9C ]
+    | SET `SF_eq_OF -> [ 0x0F; 0x9D ]
+    | SET `ZF1_or_SF_ne_OF  -> [ 0x0F; 0x9E ]
+    | SET `ZF0_and_SF_eq_OF -> [ 0x0F; 0x9F ]
 
   let to_string_hum = function
     | REX fls -> sprintf "REX.%s" (RexFlags.to_string fls)
@@ -245,10 +316,37 @@ module Opcode = struct
     | SHR `one  -> "SHR 1"
     | SHR `imm8 -> "SHR imm8"
     | RET -> "RET"
+    | SET `OF1  -> "SET OF=1"
+    | SET `OF0  -> "SET OF=0"
+    | SET `CF1  -> "SET CF=1"
+    | SET `CF0  -> "SET CF=0"
+    | SET `ZF1  -> "SET ZF=1"
+    | SET `ZF0  -> "SET ZF=0"
+    | SET `CF1_or_ZF1   -> "SET CF=1 || ZF=1"
+    | SET `CF0_and_ZF0  -> "SET CF=0 && ZF=0"
+    | SET `SF1  -> "SET SF=1"
+    | SET `SF0  -> "SET SF=0"
+    | SET `PF1  -> "SET PF=1"
+    | SET `PF0  -> "SET PF=0"
+    | SET `SF_ne_OF -> "SET SF<>OF"
+    | SET `SF_eq_OF -> "SET SF=OF"
+    | SET `ZF1_or_SF_ne_OF  -> "SET ZF=1 || SF<>OF"
+    | SET `ZF0_and_SF_eq_OF -> "SET ZF=0 && SF=OF"
 end
 
 module Instruction = struct
   type binary_op = { source : Operand.t; dest : Operand.t }
+
+  type set_condition =
+    [ `OF1 | `OF0
+    | `CF1 | `CF0
+    | `ZF1 | `ZF0
+    | `CF1_or_ZF1 | `CF0_and_ZF0
+    | `SF1 | `SF0
+    | `PF1 | `PF0 
+    | `SF_ne_OF | `SF_eq_OF
+    | `ZF1_or_SF_ne_OF | `ZF0_and_SF_eq_OF
+    ]
 
   type t =
     | ADD of binary_op
@@ -258,6 +356,7 @@ module Instruction = struct
     | SHR of Operand.t * int
     | MOV of binary_op
     | RET
+    | SET of set_condition * Register.B8.t
 
   type encoded = [ `Op of Opcode.t | `LE64 of int | `LE32 of int | `I8 of int ] list
 
@@ -590,10 +689,16 @@ module Instruction = struct
       (* RET does not need REX.W; it defaults to 64 bits *)
       [ `Op C.RET ]
 
+    | SET (cond, tgt) ->
+      let rm = Register.B8.operand_number tgt in
+      [ `Op (C.SET cond)
+      ; `Op (C.ModRM { C.mod_ = 0b11; reg = 0; rm })
+      ]
+
   let assemble_into t buf =
     List.iter (parts t) ~f:(
       function
-      | `Op op  -> Iobuf.Fill.char     buf (Opcode.to_char op)
+      | `Op op  -> List.iter (Opcode.to_ints op) ~f:(Iobuf.Fill.int8 buf)
       | `LE32 v -> Iobuf.Fill.int32_le buf v
       | `LE64 v -> Iobuf.Fill.int64_le buf v
       | `I8 v   -> Iobuf.Fill.int8     buf v
@@ -635,6 +740,25 @@ module Instruction = struct
     Iobuf.flip_lo final;
     Iobuf.to_string final
 
+  let set_condition_to_string_gas =
+    function
+    | `OF1  -> "o"
+    | `OF0  -> "no"
+    | `CF1  -> "c"
+    | `CF0  -> "nc"
+    | `ZF1  -> "z"
+    | `ZF0  -> "nz"
+    | `CF1_or_ZF1   -> "be"
+    | `CF0_and_ZF0  -> "a"
+    | `SF1  -> "s"
+    | `SF0  -> "ns"
+    | `PF1  -> "p"
+    | `PF0  -> "np"
+    | `SF_ne_OF -> "l"
+    | `SF_eq_OF -> "ge"
+    | `ZF1_or_SF_ne_OF  -> "le"
+    | `ZF0_and_SF_eq_OF -> "g"
+
   let to_string_gas =
     let bop mnemonic { source; dest } =
       sprintf "%s %s,%s" mnemonic (Operand.to_string_gas source) (Operand.to_string_gas dest)
@@ -647,6 +771,10 @@ module Instruction = struct
     | SHR (tgt, bts) -> sprintf "shrq $%i,%s" bts (Operand.to_string_gas tgt)
     | MOV args -> bop "movq" args
     | RET -> "ret"
+    | SET (cond, tgt) ->
+      sprintf "set%s %s"
+        (set_condition_to_string_gas cond)
+        (Register.B8.to_string_gas tgt)
 end
 
 module Std = struct

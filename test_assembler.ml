@@ -119,6 +119,22 @@ let instructions =
 
   ; (* RET *)
     [ Assembler.Instruction.RET ]
+
+  ; (* SETcc *)
+    begin
+      let r8s = Assembler.Register.B8.([ AL; BL; CL; DL; AH; BH; CH; DH ]) in
+      let conds = 
+        [ `OF1 ; `OF0 ; `CF1 ; `CF0 ; `ZF1 ; `ZF0 ; `SF1 ; `SF0 ; `PF1 ; `PF0 
+        ; `CF1_or_ZF1 ; `CF0_and_ZF0 ; `SF_ne_OF ; `SF_eq_OF
+        ; `ZF1_or_SF_ne_OF ; `ZF0_and_SF_eq_OF
+        ]
+      in
+      List.concat_map r8s ~f:(fun reg ->
+        List.map conds ~f:(fun cond ->
+          Assembler.Instruction.SET (cond, reg)
+        )
+      )
+    end
   ]
   |> List.concat
 
@@ -213,7 +229,11 @@ let rec bisect =
 
 module Counts = struct
   include Map.Make(struct
-    type t = [ `ADD | `INC | `DEC | `SHL | `SHR | `MOV | `RET ] with compare, sexp
+    type t =
+      [ `ADD | `INC | `DEC | `SHL | `SHR
+      | `MOV | `RET | `SET
+      ]
+    with compare, sexp
   end)
 
   let key_of_instruction =
@@ -226,6 +246,7 @@ module Counts = struct
     | I.SHL _ -> `SHL
     | I.SHR _ -> `SHR
     | I.RET -> `RET
+    | I.SET _ -> `SET
 
   let key_to_string =
     function
@@ -236,6 +257,7 @@ module Counts = struct
     | `SHR -> "SHR"
     | `MOV -> "MOV"
     | `RET -> "RET"
+    | `SET -> "SET"
 
   let count_instructions =
     List.fold ~init:empty ~f:(fun acc inst ->

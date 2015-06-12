@@ -33,12 +33,30 @@ module Register : sig
   val instruction_pointer : t
 
   val to_string_gas : t -> string
+
+  (* In general, I'm only implementing operations on 64bit registers.
+   * However, the SETcc series of instructions (understandably) only
+   * work on 8bit registers, and thus we need these as a special case: *)
+  module B8 : sig
+    type reg64 = t
+    type t =
+      | AL
+      | BL
+      | CL
+      | DL
+      | AH
+      | BH
+      | CH
+      | DH
+
+    val of_reg64 : reg64 -> [ `L | `H ] -> t
+    val to_string_gas : t -> string
+  end
 end
 
 module Opcode : sig
   type t
-  val to_int : t -> int
-  val to_char : t -> char
+  val to_ints : t -> int list
   val to_string_hum : t -> string
 end
 
@@ -67,6 +85,17 @@ end
 module Instruction : sig
   type binary_op = { source : Operand.t; dest : Operand.t }
 
+  type set_condition =
+    [ `OF1 | `OF0
+    | `CF1 | `CF0
+    | `ZF1 | `ZF0
+    | `CF1_or_ZF1 | `CF0_and_ZF0
+    | `SF1 | `SF0
+    | `PF1 | `PF0 
+    | `SF_ne_OF | `SF_eq_OF
+    | `ZF1_or_SF_ne_OF | `ZF0_and_SF_eq_OF
+    ]
+
   type t =
     | ADD of binary_op
     | INC of Operand.t
@@ -75,6 +104,9 @@ module Instruction : sig
     | SHR of Operand.t * int
     | MOV of binary_op
     | RET
+      (* Simly to Register.B8 comments, this is only a subset of
+       * the SETcc family. *)
+    | SET of set_condition * Register.B8.t
 
   type encoded = [ `Op of Opcode.t | `LE32 of int | `LE64 of int | `I8 of int ] list
 
