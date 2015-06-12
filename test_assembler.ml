@@ -88,11 +88,11 @@ let instructions =
       )
     end
 
-  ; (* INC, DEC *)
-    List.concat_map operands ~f:(fun tgt ->
-      match tgt with
+  ; (* INC, DEC, PUSH *)
+    List.concat_map operands ~f:(fun arg ->
+      match arg with
       | Imm _ -> []
-      | tgt -> Assembler.Instruction.( [ INC tgt; DEC tgt ] )
+      | arg -> Assembler.Instruction.( [ INC arg; DEC arg; PUSH arg ] )
     )
 
   ; (* SHL, SHR *)
@@ -243,6 +243,7 @@ module Counts = struct
     | ADD | AND | OR | XOR 
     | INC | DEC | SHL | SHR
     | MOV | RET | SET | MOVZBQ
+    | PUSH
   with compare, sexp
 
   include Map.Make(struct type t = key with compare, sexp end)
@@ -262,6 +263,7 @@ module Counts = struct
     | I.RET -> RET
     | I.SET _ -> SET
     | I.MOVZBQ _ -> MOVZBQ
+    | I.PUSH _ -> PUSH
 
   let key_to_string =
     function
@@ -277,6 +279,7 @@ module Counts = struct
     | RET -> "RET"
     | SET -> "SET"
     | MOVZBQ -> "MOVZBQ"
+    | PUSH -> "PUSH"
 
   let count_instructions =
     List.fold ~init:empty ~f:(fun acc inst ->

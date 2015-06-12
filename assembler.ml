@@ -232,6 +232,7 @@ module Opcode = struct
     | RET
     | SET of set_condition
     | MOVZBQ
+    | PUSH of [ `rm64 | `r64 of int | `imm8 | `imm32 ]
 
   let to_ints = function
     | REX fls -> [ 0x40 lor (RexFlags.to_int fls) ]
@@ -275,7 +276,7 @@ module Opcode = struct
     | MOV `rm64_r64       -> [ 0x8B ]
     | MOV `moffset64_RAX  -> [ 0xA1 ]
     | MOV `RAX_moffset64  -> [ 0xA3 ]
-    | MOV `imm64_r64 r321 ->
+    | MOV (`imm64_r64 r321) ->
       assert (0 <= r321 && r321 <= 7);
       [ 0xB8 + r321 ]
     | MOV `imm32_rm64     -> [ 0xC7 ]
@@ -297,6 +298,12 @@ module Opcode = struct
     | SET `ZF1_or_SF_ne_OF  -> [ 0x0F; 0x9E ]
     | SET `ZF0_and_SF_eq_OF -> [ 0x0F; 0x9F ]
     | MOVZBQ -> [ 0x0F; 0xB6 ]
+    | PUSH `rm64 -> [ 0xFF ]
+    | PUSH (`r64 r321) ->
+      assert (0 <= r321 && r321 <= 7);
+      [ 0x50 + r321 ]
+    | PUSH `imm8  -> [ 0x6A ]
+    | PUSH `imm32 -> [ 0x68 ]
 
   let to_string_hum =
     let subvariant_to_string_hum =
@@ -310,9 +317,11 @@ module Opcode = struct
       | `RAX_moffset64  -> "RAX moffset64"
       | `one -> "1"
       | `imm8 -> "imm8"
+      | `imm32 -> "imm32"
       | `imm64_r64 r321 -> sprintf "imm64 r64(%i)" r321
+      | `r64 r321 -> sprintf "r64(%i)" r321
+      | `rm64 -> "rm64"
     in
-
     function
     | REX fls -> sprintf "REX.%s" (RexFlags.to_string fls)
     | ModRM { mod_; reg; rm } -> sprintf "ModRM(m:%i reg:%i r/m:%i)" mod_ reg rm
@@ -344,6 +353,7 @@ module Opcode = struct
     | SET `ZF1_or_SF_ne_OF  -> "SET ZF=1 || SF<>OF"
     | SET `ZF0_and_SF_eq_OF -> "SET ZF=0 && SF=OF"
     | MOVZBQ -> "MOVZBQ"
+    | PUSH sv -> "PUSH " ^ subvariant_to_string_hum sv
 end
 
 module Instruction = struct
@@ -373,6 +383,7 @@ module Instruction = struct
     | RET
     | SET of set_condition * Register.B8.t
     | MOVZBQ of Register.B8.t * Register.t
+    | PUSH of Operand.t
 
   type encoded = [ `Op of Opcode.t | `LE64 of int | `LE32 of int | `I8 of int ] list
 
@@ -738,6 +749,31 @@ module Instruction = struct
       ; `Op (C.ModRM { C.mod_ = 0b11; reg = r321; rm })
       ]
 
+    | PUSH (A.Imm imm) ->
+      begin
+        let imm = 
+          match immediate_size imm with
+          | `Zero -> `I8 0
+          | `I8 i -> `I8 i
+          | `I32 i -> `I32 i
+          | `I63 _ -> failwith "PUSH immediate too large"
+        in
+        match imm with
+        | `I8  i -> [ `Op (C.PUSH `imm8);  `I8 i   ]
+        | `I32 i -> [ `Op (C.PUSH `imm32); `LE32 i ]
+      end
+    | PUSH (A.Reg64 src) ->
+      let r4, r321 = split_4th (R.operand_number src) in
+      let i = `Op (C.PUSH (`r64 r321)) in
+      if r4
+      then [ `Op (C.REX C.RexFlags.(set ~b:true empty)); i ]
+      else [ i ]
+    | PUSH (A.Mem64 src) ->
+      make_instruction
+        ~rex_w:false (C.PUSH `rm64)
+        ~modrm_sib_disp:(`Op_extn 6, A.Mem64 src)
+        ()
+
   let assemble_into t buf =
     List.iter (parts t) ~f:(
       function
@@ -823,6 +859,7 @@ module Instruction = struct
         (Register.B8.to_string_gas tgt)
     | MOVZBQ (src, dest) ->
       sprintf "movzbq %s,%s" (Register.B8.to_string_gas src) (Register.to_string_gas dest)
+    | PUSH src -> "pushq " ^ Operand.to_string_gas src
 end
 
 module Std = struct

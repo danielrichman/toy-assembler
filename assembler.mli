@@ -110,6 +110,7 @@ module Instruction : sig
        * I have only implemented a subset of SET & MOVZX. *)
     | SET of set_condition * Register.B8.t
     | MOVZBQ of Register.B8.t * Register.t
+    | PUSH of Operand.t
 
   type encoded = [ `Op of Opcode.t | `LE32 of int | `LE64 of int | `I8 of int ] list
 
