@@ -221,6 +221,8 @@ module Opcode = struct
     | SIB of sib
     | ADD of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
     | AND of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
+    | OR  of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
+    | XOR of [ `imm32_RAX | `imm32_rm64 | `imm8_rm64 | `r64_rm64 | `rm64_r64 ]
     | INC
     | DEC
     | SHL of [ `one | `imm8 ]
@@ -253,6 +255,16 @@ module Opcode = struct
     | AND `imm8_rm64  -> [ 0x83 ]
     | AND `r64_rm64   -> [ 0x21 ]
     | AND `rm64_r64   -> [ 0x23 ]
+    | OR  `imm32_RAX  -> [ 0x0D ]
+    | OR  `imm32_rm64 -> [ 0x81 ]
+    | OR  `imm8_rm64  -> [ 0x83 ]
+    | OR  `r64_rm64   -> [ 0x09 ]
+    | OR  `rm64_r64   -> [ 0x0B ]
+    | XOR `imm32_RAX  -> [ 0x35 ]
+    | XOR `imm32_rm64 -> [ 0x81 ]
+    | XOR `imm8_rm64  -> [ 0x83 ]
+    | XOR `r64_rm64   -> [ 0x31 ]
+    | XOR `rm64_r64   -> [ 0x33 ]
     | INC -> [ 0xff ]
     | DEC -> [ 0xff ]
     | SHL `one  -> [ 0xD1 ]
@@ -307,6 +319,8 @@ module Opcode = struct
     | SIB { base; index; scale } -> sprintf "SIB(s:%i i:%i b:%i)" scale index base
     | ADD sv -> "ADD " ^ subvariant_to_string_hum sv
     | AND sv -> "AND " ^ subvariant_to_string_hum sv
+    | OR  sv -> "OR "  ^ subvariant_to_string_hum sv
+    | XOR sv -> "XOR " ^ subvariant_to_string_hum sv
     | MOV sv -> "MOV " ^ subvariant_to_string_hum sv
     | INC -> "INC"
     | DEC -> "DEC"
@@ -349,6 +363,8 @@ module Instruction = struct
   type t =
     | ADD of binary_op
     | AND of binary_op
+    | OR  of binary_op
+    | XOR of binary_op
     | INC of Operand.t
     | DEC of Operand.t
     | SHL of Operand.t * int
@@ -650,6 +666,8 @@ module Instruction = struct
     function
     | ADD sd -> typical_binary_op (fun x -> C.ADD x) ~opcode_extn:0 sd
     | AND sd -> typical_binary_op (fun x -> C.AND x) ~opcode_extn:4 sd
+    | OR  sd -> typical_binary_op (fun x -> C.OR  x) ~opcode_extn:1 sd
+    | XOR sd -> typical_binary_op (fun x -> C.XOR x) ~opcode_extn:6 sd
 
     | INC (A.Imm _) ->
       failwith "Can't increment an immediate"
@@ -791,6 +809,8 @@ module Instruction = struct
     function
     | ADD args -> bop "addq" args
     | AND args -> bop "andq" args
+    | OR  args -> bop "orq"  args
+    | XOR args -> bop "xorq" args
     | INC tgt -> sprintf "incq %s" (Operand.to_string_gas tgt)
     | DEC tgt -> sprintf "decq %s" (Operand.to_string_gas tgt)
     | SHL (tgt, bts) -> sprintf "shlq $%i,%s" bts (Operand.to_string_gas tgt)

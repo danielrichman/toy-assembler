@@ -94,6 +94,8 @@ module Instruction : sig
   type t =
     | ADD of binary_op
     | AND of binary_op
+    | OR  of binary_op
+    | XOR of binary_op
     | INC of Operand.t
     | DEC of Operand.t
     | SHL of Operand.t * int

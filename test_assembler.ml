@@ -71,7 +71,7 @@ let operand_pairs ~f =
 
 let instructions =
   let reg_b8s = Assembler.Register.B8.([ AL; BL; CL; DL ]) in
-  [ (* BOPs: ADD, AND *)
+  [ (* BOPs: ADD, AND, OR, XOR *)
     begin
       let args = operand_pairs ~f:(
         function
@@ -84,7 +84,7 @@ let instructions =
       List.concat_map args ~f:(fun (source, dest) ->
         let open Assembler.Instruction in
         let sd = { source; dest } in
-        [ ADD sd; AND sd ]
+        [ ADD sd; AND sd; OR sd; XOR sd ]
       )
     end
 
@@ -240,7 +240,8 @@ let rec bisect =
 
 module Counts = struct
   type key =
-    | ADD | AND | INC | DEC | SHL | SHR
+    | ADD | AND | OR | XOR 
+    | INC | DEC | SHL | SHR
     | MOV | RET | SET | MOVZBQ
   with compare, sexp
 
@@ -251,6 +252,8 @@ module Counts = struct
     function
     | I.ADD _ -> ADD
     | I.AND _ -> AND
+    | I.OR  _ -> OR 
+    | I.XOR _ -> XOR
     | I.INC _ -> INC
     | I.DEC _ -> DEC
     | I.MOV _ -> MOV
@@ -264,6 +267,8 @@ module Counts = struct
     function
     | ADD -> "ADD"
     | AND -> "AND"
+    | OR  -> "OR"
+    | XOR -> "XOR"
     | INC -> "INC"
     | DEC -> "DEC"
     | SHL -> "SHL"
